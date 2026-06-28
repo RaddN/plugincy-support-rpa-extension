@@ -4,15 +4,114 @@ const JOB_STATE_KEY = "rpa_job_state";
 const SETTINGS_KEY = "rpa_settings";
 const TASK_INDEX_KEY = "rpa_task_index";
 const TASK_KEY_PREFIX = "rpa_task_";
+const PRODUCT_INDEX_KEY = "rpa_product_index";
+const PRODUCT_KEY_PREFIX = "rpa_product_";
+const DEFAULT_PRODUCTS_SEEDED_KEY = "rpa_default_products_seeded_v1";
 const ACTIVITY_KEY = "rpa_activity";
 const NEWS_CACHE_KEY = "rpa_news_cache";
 const GPT_TAB_ID_KEY = "rpa_gpt_tab_id";
 
 const MAX_QUEUE_SIZE = 20;
 const MAX_TASKS = 80;
+const MAX_PRODUCTS = 150;
+const MAX_PRODUCT_LINKS = 30;
 const MAX_ACTIVITY_ITEMS = 30;
 const ACTIVE_JOB_TIMEOUT_MS = 6 * 60 * 1000;
 const GPT_URL = "https://chatgpt.com/";
+
+const DEFAULT_SETTINGS = {
+  autoSendReplies: false,
+  autoProcessTickets: true,
+  theme: "light"
+};
+
+const DEFAULT_PRODUCTS = [
+  {
+    id: "default_dynamic_ajax_product_filter",
+    name: "Dynamic Ajax Product Filter",
+    keywords: [
+      "dynamic ajax product filter",
+      "dynamic ajax product filters",
+      "ajax product filters",
+      "dynamic ajax filters",
+      "woocommerce product filter",
+      "woocommerce filters",
+      "dapf"
+    ],
+    resources: {
+      githubUrl: "https://github.com/RaddN/dynamic-ajax-product-filters-for-woocommerce-pro",
+      docsUrl: "https://plugincy.com/documentations/dynamic-ajax-product-filters-for-woocommerce/",
+      landingUrl: "https://plugincy.com/dynamic-ajax-product-filters-for-woocommerce/",
+      supportUrl: "",
+      changelogUrl: "",
+      customLinks: [
+        {
+          label: "Product website",
+          url: "https://ajaxproductfilters.com/"
+        }
+      ]
+    },
+    notes:
+      "Primary WooCommerce filter plugin. Use the GitHub repository, Plugincy landing page, product website, and documentation links when helpful."
+  },
+  {
+    id: "default_one_page_quick_checkout",
+    name: "One Page Quick Checkout",
+    keywords: [
+      "one page quick checkout",
+      "one page checkout",
+      "quick checkout",
+      "all in one checkout",
+      "checkout plugin",
+      "woocommerce checkout"
+    ],
+    resources: {
+      githubUrl: "https://github.com/RaddN/one-page-quick-checkout-for-woocommerce-pro/",
+      docsUrl: "https://plugincy.com/documentations/one-page-quick-checkout-for-woocommerce/",
+      landingUrl: "https://plugincy.com/one-page-checkout-for-woocommerce/",
+      supportUrl: "",
+      changelogUrl: "",
+      customLinks: [
+        {
+          label: "Product website",
+          url: "https://allinonecheckout.com/"
+        }
+      ]
+    },
+    notes:
+      "WooCommerce one-page checkout plugin. Include docs, Plugincy landing page, and product website quick links when relevant."
+  },
+  {
+    id: "default_multi_location_inventory",
+    name: "Multi Location Product & Inventory Management for WooCommerce",
+    keywords: [
+      "multi location product",
+      "multi location inventory",
+      "multi location product inventory",
+      "location wise product",
+      "location-wise product",
+      "location inventory",
+      "woocommerce inventory"
+    ],
+    resources: {
+      githubUrl: "https://github.com/RaddN/location-wise-product-for-wc",
+      docsUrl:
+        "https://plugincy.com/documentations/multi-location-product-inventory-management-for-woocommerce/",
+      landingUrl:
+        "https://plugincy.com/multi-location-product-and-inventory-management-for-woocommerce/",
+      supportUrl: "",
+      changelogUrl: "",
+      customLinks: [
+        {
+          label: "Product website",
+          url: "https://multilocationinventory.com/"
+        }
+      ]
+    },
+    notes:
+      "WooCommerce multi-location inventory plugin. Use the repo, docs, Plugincy page, and product website as quick-link context."
+  }
+];
 
 const SUPPORT_TAB_PATTERNS = [
   "https://hostinger.titan.email/*",
@@ -76,14 +175,30 @@ void initializeExtension();
 
 async function initializeExtension() {
   const settingsResult = await chrome.storage.sync.get(SETTINGS_KEY);
-  if (!settingsResult[SETTINGS_KEY]) {
+  const existingSettings =
+    settingsResult[SETTINGS_KEY] && typeof settingsResult[SETTINGS_KEY] === "object"
+      ? settingsResult[SETTINGS_KEY]
+      : {};
+
+  if (
+    !settingsResult[SETTINGS_KEY] ||
+    Object.keys(DEFAULT_SETTINGS).some((key) => !(key in existingSettings))
+  ) {
     await chrome.storage.sync.set({
       [SETTINGS_KEY]: {
-        autoSendReplies: false,
-        theme: "light"
+        ...DEFAULT_SETTINGS,
+        ...existingSettings,
+        autoSendReplies: Boolean(existingSettings.autoSendReplies),
+        autoProcessTickets:
+          existingSettings.autoProcessTickets === undefined
+            ? DEFAULT_SETTINGS.autoProcessTickets
+            : Boolean(existingSettings.autoProcessTickets),
+        theme: existingSettings.theme === "dark" ? "dark" : "light"
       }
     });
   }
+
+  await ensureDefaultProducts();
 
   await Promise.all([
     chrome.alarms.create("rpa-news-refresh", { periodInMinutes: 60 }),
@@ -130,6 +245,12 @@ async function routeMessage(message, sender) {
       await refreshNewsCache();
       return { refreshed: true };
 
+    case "RPA_ENSURE_DEFAULT_PRODUCTS":
+      await ensureDefaultProducts();
+      return {
+        products: (await loadProducts()).length
+      };
+
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
   }
@@ -152,7 +273,7 @@ function assertChatGptSender(sender) {
 }
 
 async function processTicket(rawTicket, originTab) {
-  const ticket = normalizeTicket(rawTicket, originTab);
+  const ticket = await enrichTicketWithProduct(normalizeTicket(rawTicket, originTab));
 
   if (containsCredentials(ticket.text)) {
     const task = await createEscalationTask({
@@ -239,11 +360,305 @@ function normalizeTicket(rawTicket, originTab) {
     subject,
     text,
     githubUrl,
+    productId: cleanText(rawTicket.productId || "", 80),
     source,
     ticketId: cleanText(rawTicket.ticketId || "", 80),
     pageUrl,
     originTabId: Number(originTab?.id || rawTicket.originTabId || 0)
   };
+}
+
+async function enrichTicketWithProduct(ticket) {
+  const products = await loadProducts();
+  const explicitProduct = products.find((product) => product.id === ticket.productId);
+  const matchedProduct =
+    explicitProduct ||
+    matchProductForTicket(products, `${ticket.subject}\n${ticket.text}\n${ticket.pageUrl}`);
+
+  if (!matchedProduct) {
+    return {
+      ...ticket,
+      product: null
+    };
+  }
+
+  return {
+    ...ticket,
+    productId: matchedProduct.id,
+    product: {
+      id: matchedProduct.id,
+      name: matchedProduct.name,
+      keywords: matchedProduct.keywords,
+      resources: matchedProduct.resources,
+      notes: matchedProduct.notes
+    },
+    githubUrl: ticket.githubUrl || matchedProduct.resources.githubUrl || ""
+  };
+}
+
+async function loadProducts() {
+  const data = await chrome.storage.sync.get(null);
+  const index = Array.isArray(data[PRODUCT_INDEX_KEY])
+    ? data[PRODUCT_INDEX_KEY].filter((id) => typeof id === "string")
+    : [];
+
+  return index
+    .map((id) => normalizeProduct(data[`${PRODUCT_KEY_PREFIX}${id}`]))
+    .filter(Boolean)
+    .slice(0, MAX_PRODUCTS);
+}
+
+async function ensureDefaultProducts() {
+  const data = await chrome.storage.sync.get(null);
+  const currentIndex = Array.isArray(data[PRODUCT_INDEX_KEY])
+    ? data[PRODUCT_INDEX_KEY].filter((id) => typeof id === "string")
+    : [];
+  const existingProducts = currentIndex
+    .map((id) => normalizeProduct(data[`${PRODUCT_KEY_PREFIX}${id}`]))
+    .filter(Boolean);
+  const writes = {
+    [DEFAULT_PRODUCTS_SEEDED_KEY]: true
+  };
+  const nextIndex = [...currentIndex];
+  const now = Date.now();
+
+  for (const defaultProduct of DEFAULT_PRODUCTS) {
+    const product = normalizeProduct({
+      ...defaultProduct,
+      createdAt: now,
+      updatedAt: now
+    });
+    if (!product) {
+      continue;
+    }
+
+    const existing = existingProducts.find((candidate) =>
+      isSameProductRecord(candidate, product)
+    );
+
+    if (existing) {
+      const merged = mergeDefaultProduct(existing, product);
+      writes[`${PRODUCT_KEY_PREFIX}${existing.id}`] = merged;
+      const existingIndex = existingProducts.findIndex((item) => item.id === existing.id);
+      if (existingIndex >= 0) {
+        existingProducts[existingIndex] = merged;
+      }
+      if (!nextIndex.includes(existing.id)) {
+        nextIndex.unshift(existing.id);
+      }
+      continue;
+    }
+
+    writes[`${PRODUCT_KEY_PREFIX}${product.id}`] = product;
+    nextIndex.unshift(product.id);
+    existingProducts.push(product);
+  }
+
+  writes[PRODUCT_INDEX_KEY] = uniqueStrings(nextIndex).slice(0, MAX_PRODUCTS);
+  await chrome.storage.sync.set(writes);
+}
+
+function isSameProductRecord(a, b) {
+  if (!a || !b) {
+    return false;
+  }
+
+  return (
+    a.id === b.id ||
+    a.name.toLowerCase() === b.name.toLowerCase() ||
+    Boolean(a.resources.githubUrl && a.resources.githubUrl === b.resources.githubUrl)
+  );
+}
+
+function mergeDefaultProduct(existing, defaults) {
+  return {
+    ...existing,
+    keywords: uniqueStrings([...existing.keywords, ...defaults.keywords]).slice(0, 20),
+    resources: {
+      githubUrl: existing.resources.githubUrl || defaults.resources.githubUrl,
+      docsUrl: existing.resources.docsUrl || defaults.resources.docsUrl,
+      landingUrl: existing.resources.landingUrl || defaults.resources.landingUrl,
+      supportUrl: existing.resources.supportUrl || defaults.resources.supportUrl,
+      changelogUrl: existing.resources.changelogUrl || defaults.resources.changelogUrl,
+      customLinks: mergeCustomLinks(
+        existing.resources.customLinks,
+        defaults.resources.customLinks
+      )
+    },
+    notes: existing.notes || defaults.notes,
+    updatedAt: Date.now()
+  };
+}
+
+function mergeCustomLinks(existingLinks, defaultLinks) {
+  const seen = new Set();
+  const links = [];
+
+  for (const link of [...existingLinks, ...defaultLinks]) {
+    if (!link?.url || seen.has(link.url)) {
+      continue;
+    }
+    seen.add(link.url);
+    links.push({
+      label: cleanText(link.label || "Resource", 80) || "Resource",
+      url: link.url
+    });
+  }
+
+  return links.slice(0, MAX_PRODUCT_LINKS);
+}
+
+function uniqueStrings(values) {
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values) {
+    const normalized = typeof value === "string" ? value.trim() : "";
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+function normalizeProduct(product) {
+  if (!product || typeof product !== "object") {
+    return null;
+  }
+
+  const id = cleanText(product.id, 80);
+  const name = cleanText(product.name, 160);
+  if (!id || !name) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    keywords: normalizeKeywordList(product.keywords),
+    resources: normalizeProductResources(product.resources || product),
+    notes: cleanText(product.notes, 1000),
+    createdAt: Number(product.createdAt || Date.now()),
+    updatedAt: Number(product.updatedAt || product.createdAt || Date.now())
+  };
+}
+
+function normalizeKeywordList(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[\n,]+/);
+  const seen = new Set();
+  const keywords = [];
+
+  for (const item of raw) {
+    const keyword = cleanText(item, 80).toLowerCase();
+    if (keyword.length < 2 || seen.has(keyword)) {
+      continue;
+    }
+    seen.add(keyword);
+    keywords.push(keyword);
+  }
+
+  return keywords.slice(0, 20);
+}
+
+function normalizeProductResources(resources) {
+  return {
+    githubUrl: normalizeGithubUrl(resources.githubUrl),
+    docsUrl: normalizeHttpsUrl(resources.docsUrl, 1000),
+    landingUrl: normalizeHttpsUrl(resources.landingUrl, 1000),
+    supportUrl: normalizeHttpsUrl(resources.supportUrl, 1000),
+    changelogUrl: normalizeHttpsUrl(resources.changelogUrl, 1000),
+    customLinks: normalizeCustomLinks(resources.customLinks)
+  };
+}
+
+function normalizeCustomLinks(value) {
+  const raw = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const links = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const url = normalizeHttpsUrl(item.url, 1000);
+    if (!url || seen.has(url)) {
+      continue;
+    }
+
+    seen.add(url);
+    links.push({
+      label: cleanText(item.label || "Resource", 80) || "Resource",
+      url
+    });
+  }
+
+  return links.slice(0, MAX_PRODUCT_LINKS);
+}
+
+function matchProductForTicket(products, text) {
+  const haystack = String(text || "").toLowerCase();
+  let best = null;
+  let bestScore = 0;
+
+  for (const product of products) {
+    let score = 0;
+    const name = product.name.toLowerCase();
+    if (name && haystack.includes(name)) {
+      score += 12;
+    }
+
+    for (const token of name.split(/[^a-z0-9]+/).filter((item) => item.length >= 4)) {
+      if (haystack.includes(token)) {
+        score += 1;
+      }
+    }
+
+    for (const keyword of product.keywords) {
+      if (keyword && haystack.includes(keyword)) {
+        score += keyword.length > 8 ? 7 : 4;
+      }
+    }
+
+    const resourceUrls = [
+      ...Object.entries(product.resources)
+        .filter(([key]) => key !== "customLinks")
+        .map(([, value]) => value),
+      ...product.resources.customLinks.map((link) => link.url)
+    ];
+
+    for (const resourceUrl of resourceUrls) {
+      const resourceSlug = extractUsefulUrlSlug(resourceUrl);
+      if (resourceSlug && haystack.includes(resourceSlug)) {
+        score += 4;
+      }
+    }
+
+    if (score > bestScore) {
+      best = product;
+      bestScore = score;
+    }
+  }
+
+  return bestScore >= 4 ? best : null;
+}
+
+function extractUsefulUrlSlug(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.pathname
+      .split("/")
+      .filter(Boolean)
+      .pop()
+      ?.replace(/[-_]+/g, " ")
+      .toLowerCase()
+      .slice(0, 80);
+  } catch {
+    return "";
+  }
 }
 
 function cleanText(value, maxLength) {
@@ -267,6 +682,20 @@ function normalizeGithubUrl(value) {
     return url.protocol === "https:" && url.hostname === "github.com"
       ? url.href.slice(0, 600)
       : "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizeHttpsUrl(value, maxLength = 1000) {
+  const candidate = String(value || "").trim();
+  if (!candidate) {
+    return "";
+  }
+
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "https:" ? url.href.slice(0, maxLength) : "";
   } catch {
     return "";
   }

@@ -112,6 +112,87 @@
               </p>
             </section>
 
+            <section class="preferences-section" id="preferences-section" aria-labelledby="preferences-title" hidden>
+              <div class="section-heading">
+                <div>
+                  <h2 id="preferences-title">Preferences & product resources</h2>
+                  <p class="section-kicker">Configure automation behavior and the plugin links ChatGPT should use in replies.</p>
+                </div>
+                <button class="text-button" id="close-preferences" type="button">Close</button>
+              </div>
+
+              <div class="preference-grid">
+                <label class="preference-card">
+                  <span>
+                    <strong>Auto-draft new tickets</strong>
+                    <small>When a readable Fluent Support ticket or Titan email opens, queue a ChatGPT draft automatically.</small>
+                  </span>
+                  <input id="autoprocess-toggle" type="checkbox">
+                  <span class="switch" aria-hidden="true"></span>
+                </label>
+
+                <label class="preference-card">
+                  <span>
+                    <strong>Auto-send replies</strong>
+                    <small>Send after drafting. Keep off until selectors are verified on your current support screens.</small>
+                  </span>
+                  <input id="preferences-autosend-toggle" type="checkbox">
+                  <span class="switch" aria-hidden="true"></span>
+                </label>
+              </div>
+
+              <form class="product-form" id="product-form">
+                <input id="product-id" type="hidden">
+                <div class="product-form-head">
+                  <div>
+                    <h3>Product/plugin library</h3>
+                    <p>These records sync with Chrome and are matched against ticket text. Matched links are sent to ChatGPT as quick-link context.</p>
+                  </div>
+                  <div class="product-actions">
+                    <button class="secondary-primary-button" id="product-save" type="submit">Save product</button>
+                    <button class="text-button" id="product-cancel" type="button" hidden>Cancel edit</button>
+                  </div>
+                </div>
+
+                <div class="product-form-grid">
+                  <label>
+                    <span>Product/plugin name</span>
+                    <input id="product-name" type="text" maxlength="160" placeholder="Smart Site Reviews" required>
+                  </label>
+                  <label>
+                    <span>Match keywords</span>
+                    <input id="product-keywords" type="text" maxlength="400" placeholder="smart site reviews, reviews, testimonial">
+                  </label>
+                  <label>
+                    <span>GitHub repository</span>
+                    <input id="product-github" type="url" inputmode="url" placeholder="https://github.com/plugincy/example-plugin">
+                  </label>
+                  <label>
+                    <span>Documentation</span>
+                    <input id="product-docs" type="url" inputmode="url" placeholder="https://plugincy.com/docs/example-plugin/">
+                  </label>
+                  <label>
+                    <span>Landing page</span>
+                    <input id="product-landing" type="url" inputmode="url" placeholder="https://plugincy.com/example-plugin/">
+                  </label>
+                  <label>
+                    <span>Support/changelog link</span>
+                    <input id="product-support" type="url" inputmode="url" placeholder="https://plugincy.com/support/">
+                  </label>
+                  <label class="product-notes-field">
+                    <span>Additional quick links</span>
+                    <textarea id="product-custom-links" rows="4" maxlength="3000" placeholder="One per line. Example:&#10;Video walkthrough: https://youtube.com/...&#10;Live demo: https://demo.plugincy.com/...&#10;CodeCanyon page: https://..."></textarea>
+                  </label>
+                  <label class="product-notes-field">
+                    <span>Internal notes for ChatGPT</span>
+                    <textarea id="product-notes" rows="3" maxlength="1000" placeholder="Useful constraints, common troubleshooting steps, compatibility notes..."></textarea>
+                  </label>
+                </div>
+              </form>
+
+              <div class="product-library" id="product-list" aria-live="polite"></div>
+            </section>
+
             <section class="task-section" aria-labelledby="tasks-title">
               <div class="section-heading">
                 <h2 id="tasks-title">Today’s work</h2>

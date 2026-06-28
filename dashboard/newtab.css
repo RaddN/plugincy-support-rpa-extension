@@ -472,6 +472,246 @@ svg {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 12%, transparent);
 }
 
+.preferences-section {
+  scroll-margin-top: calc(var(--topbar-height) + 18px);
+  margin-top: 24px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-soft) 62%, transparent), transparent 42%),
+    var(--surface-subtle);
+  box-shadow: 0 14px 30px rgba(16, 34, 61, 0.07);
+}
+
+.preferences-section[hidden] {
+  display: none;
+}
+
+.section-kicker {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preference-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.preference-card {
+  display: grid;
+  min-height: 88px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.preference-card strong,
+.product-form label span {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 730;
+}
+
+.preference-card small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.preference-card input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preference-card input:checked + .switch {
+  background: var(--accent);
+}
+
+.preference-card input:checked + .switch::after {
+  transform: translateX(18px);
+}
+
+.preference-card input:focus-visible + .switch {
+  outline: 3px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  outline-offset: 2px;
+}
+
+.product-form {
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+}
+
+.product-form-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.product-form h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+}
+
+.product-form p {
+  max-width: 620px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.product-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.product-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.product-form label {
+  min-width: 0;
+}
+
+.product-form input,
+.product-form textarea {
+  width: 100%;
+  min-width: 0;
+  margin-top: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.product-form input {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.product-form textarea {
+  min-height: 86px;
+  padding: 11px 12px;
+  resize: vertical;
+}
+
+.product-form input::placeholder,
+.product-form textarea::placeholder {
+  color: var(--faint);
+}
+
+.product-notes-field {
+  grid-column: 1 / -1;
+}
+
+.product-library {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.product-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.product-card h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.product-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.product-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.product-links a,
+.product-chip {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.product-links a {
+  padding: 0 9px;
+}
+
+.product-chip {
+  padding: 0 8px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+}
+
+.product-card-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.product-card-actions button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.product-card-actions button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
 .task-section {
   margin-top: 34px;
 }
@@ -1215,6 +1455,15 @@ svg {
     border-top: 0;
     border-left: 1px solid var(--border);
   }
+
+  .preference-grid,
+  .product-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .product-form-head {
+    display: grid;
+  }
 }
 
 @media (max-width: 700px) {
@@ -1339,6 +1588,18 @@ svg {
   .activity-section {
     margin: 30px -18px -40px;
     padding: 24px 18px 40px;
+  }
+
+  .preferences-section {
+    padding: 16px;
+  }
+
+  .product-card {
+    grid-template-columns: 1fr;
+  }
+
+  .product-card-actions {
+    justify-content: flex-start;
   }
 
   .activity-row {

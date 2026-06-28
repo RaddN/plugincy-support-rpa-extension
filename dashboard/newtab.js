@@ -3,16 +3,23 @@
 
   const TASK_INDEX_KEY = "rpa_task_index";
   const TASK_KEY_PREFIX = "rpa_task_";
+  const PRODUCT_INDEX_KEY = "rpa_product_index";
+  const PRODUCT_KEY_PREFIX = "rpa_product_";
   const SETTINGS_KEY = "rpa_settings";
   const ACTIVITY_KEY = "rpa_activity";
   const NEWS_CACHE_KEY = "rpa_news_cache";
   const MAX_TASKS = 80;
+  const MAX_PRODUCTS = 150;
+  const MAX_PRODUCT_LINKS = 30;
 
   const state = {
     tasks: [],
+    products: [],
     filter: "all",
+    preferencesOpen: false,
     settings: {
       autoSendReplies: false,
+      autoProcessTickets: true,
       theme: "light"
     }
   };
@@ -31,9 +38,26 @@
     syncState: document.getElementById("sync-state"),
     processTicket: document.getElementById("process-ticket"),
     autosendToggle: document.getElementById("autosend-toggle"),
+    preferencesSection: document.getElementById("preferences-section"),
+    closePreferences: document.getElementById("close-preferences"),
+    autoprocessToggle: document.getElementById("autoprocess-toggle"),
+    preferencesAutosendToggle: document.getElementById("preferences-autosend-toggle"),
     autosendHelper: document.getElementById("autosend-helper"),
     themeToggle: document.getElementById("theme-toggle"),
     focusSettings: document.getElementById("focus-settings"),
+    productForm: document.getElementById("product-form"),
+    productId: document.getElementById("product-id"),
+    productName: document.getElementById("product-name"),
+    productKeywords: document.getElementById("product-keywords"),
+    productGithub: document.getElementById("product-github"),
+    productDocs: document.getElementById("product-docs"),
+    productLanding: document.getElementById("product-landing"),
+    productSupport: document.getElementById("product-support"),
+    productCustomLinks: document.getElementById("product-custom-links"),
+    productNotes: document.getElementById("product-notes"),
+    productSave: document.getElementById("product-save"),
+    productCancel: document.getElementById("product-cancel"),
+    productList: document.getElementById("product-list"),
     activityList: document.getElementById("activity-list"),
     refreshActivity: document.getElementById("refresh-activity"),
     newsList: document.getElementById("news-list"),
@@ -49,15 +73,28 @@
     setDateAndGreeting();
     bindEvents();
 
+    await ensureDefaultProducts();
+
     await Promise.allSettled([
       loadSettings(),
       loadTasks(),
+      loadProducts(),
       loadActivity(),
       loadNews(),
       loadSessionHealth()
     ]);
 
     document.body.dataset.rpaDashboard = "ready";
+  }
+
+  async function ensureDefaultProducts() {
+    try {
+      await chrome.runtime.sendMessage({
+        type: "RPA_ENSURE_DEFAULT_PRODUCTS"
+      });
+    } catch {
+      // Product loading below will still render any existing synced records.
+    }
   }
 
   function bindEvents() {
@@ -88,6 +125,18 @@
       void saveSettings();
     });
 
+    elements.preferencesAutosendToggle.addEventListener("change", () => {
+      state.settings.autoSendReplies = elements.preferencesAutosendToggle.checked;
+      applySettingsToUi();
+      void saveSettings();
+    });
+
+    elements.autoprocessToggle.addEventListener("change", () => {
+      state.settings.autoProcessTickets = elements.autoprocessToggle.checked;
+      applySettingsToUi();
+      void saveSettings();
+    });
+
     elements.themeToggle.addEventListener("click", () => {
       state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
       applySettingsToUi();
@@ -95,11 +144,25 @@
     });
 
     elements.focusSettings.addEventListener("click", () => {
-      document.getElementById("settings-panel")?.scrollIntoView({
+      openPreferences();
+      elements.preferencesSection?.scrollIntoView({
         behavior: "smooth",
-        block: "center"
+        block: "start"
       });
-      elements.autosendToggle.focus();
+      elements.autoprocessToggle.focus();
+    });
+
+    elements.closePreferences.addEventListener("click", () => {
+      closePreferences();
+    });
+
+    elements.productForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void saveProductFromForm();
+    });
+
+    elements.productCancel.addEventListener("click", () => {
+      resetProductForm();
     });
 
     elements.refreshActivity.addEventListener("click", () => {
@@ -122,6 +185,15 @@
         )
       ) {
         void loadTasks();
+      }
+
+      if (
+        areaName === "sync" &&
+        Object.keys(changes).some(
+          (key) => key === PRODUCT_INDEX_KEY || key.startsWith(PRODUCT_KEY_PREFIX)
+        )
+      ) {
+        void loadProducts();
       }
 
       if (areaName === "sync" && changes[SETTINGS_KEY]) {
@@ -160,6 +232,10 @@
     if (stored && typeof stored === "object") {
       state.settings = {
         autoSendReplies: Boolean(stored.autoSendReplies),
+        autoProcessTickets:
+          stored.autoProcessTickets === undefined
+            ? true
+            : Boolean(stored.autoProcessTickets),
         theme: stored.theme === "dark" ? "dark" : "light"
       };
     }
@@ -172,6 +248,7 @@
       await chrome.storage.sync.set({
         [SETTINGS_KEY]: {
           autoSendReplies: state.settings.autoSendReplies,
+          autoProcessTickets: state.settings.autoProcessTickets,
           theme: state.settings.theme
         }
       });
@@ -188,14 +265,29 @@
     document.documentElement.dataset.theme = isDark ? "dark" : "light";
     elements.themeToggle.setAttribute("aria-pressed", String(isDark));
     elements.autosendToggle.checked = state.settings.autoSendReplies;
+    elements.preferencesAutosendToggle.checked = state.settings.autoSendReplies;
+    elements.autoprocessToggle.checked = state.settings.autoProcessTickets;
 
     if (state.settings.autoSendReplies) {
       elements.autosendHelper.textContent = "Replies send after drafting";
       elements.reviewStateCopy.textContent = "Auto-send enabled";
+    } else if (state.settings.autoProcessTickets) {
+      elements.autosendHelper.textContent = "Auto-draft enabled";
+      elements.reviewStateCopy.textContent = "Auto-draft, review before send";
     } else {
       elements.autosendHelper.textContent = "Drafts require review";
       elements.reviewStateCopy.textContent = "Review before send";
     }
+  }
+
+  function openPreferences() {
+    state.preferencesOpen = true;
+    elements.preferencesSection.hidden = false;
+  }
+
+  function closePreferences() {
+    state.preferencesOpen = false;
+    elements.preferencesSection.hidden = true;
   }
 
   async function loadTasks() {
@@ -326,6 +418,262 @@
     } finally {
       setSyncWorking(false);
     }
+  }
+
+  async function loadProducts() {
+    setSyncWorking(true);
+    try {
+      const data = await chrome.storage.sync.get(null);
+      const index = Array.isArray(data[PRODUCT_INDEX_KEY])
+        ? data[PRODUCT_INDEX_KEY].filter((id) => typeof id === "string")
+        : [];
+
+      state.products = index
+        .map((id) => normalizeProduct(data[`${PRODUCT_KEY_PREFIX}${id}`]))
+        .filter(Boolean)
+        .slice(0, MAX_PRODUCTS);
+
+      renderProducts();
+    } catch (error) {
+      showToast(getErrorMessage(error, "Products could not be loaded."), "error");
+    } finally {
+      setSyncWorking(false);
+    }
+  }
+
+  function normalizeProduct(product) {
+    if (!product || typeof product !== "object") {
+      return null;
+    }
+
+    const id = normalizeText(product.id).slice(0, 80);
+    const name = normalizeText(product.name).slice(0, 160);
+    if (!id || !name) {
+      return null;
+    }
+
+    return {
+      id,
+      name,
+      keywords: normalizeKeywords(product.keywords),
+      resources: {
+        githubUrl: safeHttpsUrl(product.resources?.githubUrl || product.githubUrl),
+        docsUrl: safeHttpsUrl(product.resources?.docsUrl || product.docsUrl),
+        landingUrl: safeHttpsUrl(product.resources?.landingUrl || product.landingUrl),
+        supportUrl: safeHttpsUrl(product.resources?.supportUrl || product.supportUrl),
+        changelogUrl: safeHttpsUrl(product.resources?.changelogUrl || product.changelogUrl),
+        customLinks: normalizeCustomLinks(product.resources?.customLinks)
+      },
+      notes: normalizeMultiline(product.notes).slice(0, 1000),
+      createdAt: Number(product.createdAt || Date.now()),
+      updatedAt: Number(product.updatedAt || product.createdAt || Date.now())
+    };
+  }
+
+  async function saveProductFromForm() {
+    const existingId = normalizeText(elements.productId.value).slice(0, 80);
+    const currentProduct = existingId
+      ? state.products.find((product) => product.id === existingId)
+      : null;
+    const name = normalizeText(elements.productName.value).slice(0, 160);
+
+    if (!name) {
+      elements.productName.focus();
+      return;
+    }
+
+    const product = {
+      id: existingId || crypto.randomUUID(),
+      name,
+      keywords: normalizeKeywords(elements.productKeywords.value),
+      resources: {
+        githubUrl: safeHttpsUrl(elements.productGithub.value),
+        docsUrl: safeHttpsUrl(elements.productDocs.value),
+        landingUrl: safeHttpsUrl(elements.productLanding.value),
+        supportUrl: safeHttpsUrl(elements.productSupport.value),
+        changelogUrl: "",
+        customLinks: parseCustomLinks(elements.productCustomLinks.value)
+      },
+      notes: normalizeMultiline(elements.productNotes.value).slice(0, 1000),
+      createdAt: currentProduct?.createdAt || Date.now(),
+      updatedAt: Date.now()
+    };
+
+    setSyncWorking(true);
+    try {
+      const result = await chrome.storage.sync.get(PRODUCT_INDEX_KEY);
+      const currentIndex = Array.isArray(result[PRODUCT_INDEX_KEY])
+        ? result[PRODUCT_INDEX_KEY].filter((id) => typeof id === "string")
+        : [];
+      const nextIndex = [product.id, ...currentIndex.filter((id) => id !== product.id)].slice(
+        0,
+        MAX_PRODUCTS
+      );
+
+      await chrome.storage.sync.set({
+        [PRODUCT_INDEX_KEY]: nextIndex,
+        [`${PRODUCT_KEY_PREFIX}${product.id}`]: product
+      });
+
+      const removed = currentIndex.filter((id) => !nextIndex.includes(id));
+      if (removed.length) {
+        await chrome.storage.sync.remove(
+          removed.map((id) => `${PRODUCT_KEY_PREFIX}${id}`)
+        );
+      }
+
+      resetProductForm();
+      showToast("Product resources saved and synced.", "success");
+      await loadProducts();
+    } catch (error) {
+      showToast(getErrorMessage(error, "Product resources could not be saved."), "error");
+    } finally {
+      setSyncWorking(false);
+    }
+  }
+
+  async function deleteProduct(product) {
+    setSyncWorking(true);
+    try {
+      const result = await chrome.storage.sync.get(PRODUCT_INDEX_KEY);
+      const currentIndex = Array.isArray(result[PRODUCT_INDEX_KEY])
+        ? result[PRODUCT_INDEX_KEY]
+        : [];
+
+      await Promise.all([
+        chrome.storage.sync.set({
+          [PRODUCT_INDEX_KEY]: currentIndex.filter((id) => id !== product.id)
+        }),
+        chrome.storage.sync.remove(`${PRODUCT_KEY_PREFIX}${product.id}`)
+      ]);
+
+      if (elements.productId.value === product.id) {
+        resetProductForm();
+      }
+      state.products = state.products.filter((item) => item.id !== product.id);
+      renderProducts();
+      showToast("Product removed.");
+    } catch (error) {
+      showToast(getErrorMessage(error, "Product could not be deleted."), "error");
+    } finally {
+      setSyncWorking(false);
+    }
+  }
+
+  function editProduct(product) {
+    openPreferences();
+    elements.productId.value = product.id;
+    elements.productName.value = product.name;
+    elements.productKeywords.value = product.keywords.join(", ");
+    elements.productGithub.value = product.resources.githubUrl;
+    elements.productDocs.value = product.resources.docsUrl;
+    elements.productLanding.value = product.resources.landingUrl;
+    elements.productSupport.value = product.resources.supportUrl || product.resources.changelogUrl;
+    elements.productCustomLinks.value = serializeCustomLinks(product.resources.customLinks);
+    elements.productNotes.value = product.notes;
+    elements.productSave.textContent = "Update product";
+    elements.productCancel.hidden = false;
+    elements.productName.focus();
+  }
+
+  function resetProductForm() {
+    elements.productForm.reset();
+    elements.productId.value = "";
+    elements.productSave.textContent = "Save product";
+    elements.productCancel.hidden = true;
+  }
+
+  function renderProducts() {
+    elements.productList.replaceChildren();
+
+    if (!state.products.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      const wrapper = document.createElement("div");
+      const title = document.createElement("strong");
+      const copy = document.createElement("p");
+      title.textContent = "Add your first plugin resource";
+      copy.textContent =
+        "ChatGPT will use configured GitHub, docs, landing and support links when drafting replies.";
+      wrapper.append(title, copy);
+      empty.append(wrapper);
+      elements.productList.append(empty);
+      return;
+    }
+
+    [...state.products]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .forEach((product) => {
+        elements.productList.append(createProductCard(product));
+      });
+  }
+
+  function createProductCard(product) {
+    const card = document.createElement("article");
+    card.className = "product-card";
+
+    const copy = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = product.name;
+
+    const meta = document.createElement("p");
+    meta.textContent = product.keywords.length
+      ? `Matches: ${product.keywords.join(", ")}`
+      : "Matches by product name";
+
+    const links = document.createElement("div");
+    links.className = "product-links";
+    for (const [label, url] of productLinks(product)) {
+      if (!url) {
+        continue;
+      }
+      const link = document.createElement("a");
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = label;
+      links.append(link);
+    }
+
+    if (product.notes) {
+      const chip = document.createElement("span");
+      chip.className = "product-chip";
+      chip.textContent = "Notes";
+      links.append(chip);
+    }
+
+    copy.append(title, meta, links);
+
+    const actions = document.createElement("div");
+    actions.className = "product-card-actions";
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.textContent = "Edit";
+    editButton.addEventListener("click", () => {
+      editProduct(product);
+    });
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.textContent = "Delete";
+    deleteButton.addEventListener("click", () => {
+      void deleteProduct(product);
+    });
+
+    actions.append(editButton, deleteButton);
+    card.append(copy, actions);
+    return card;
+  }
+
+  function productLinks(product) {
+    return [
+      ["GitHub", product.resources.githubUrl],
+      ["Docs", product.resources.docsUrl],
+      ["Landing", product.resources.landingUrl],
+      ["Support", product.resources.supportUrl],
+      ["Changelog", product.resources.changelogUrl],
+      ...product.resources.customLinks.map((link) => [link.label, link.url])
+    ];
   }
 
   function renderTasks() {
@@ -848,6 +1196,115 @@
     return String(value || "")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  function normalizeMultiline(value) {
+    return String(value || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\r\n?/g, "\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function normalizeKeywords(value) {
+    const raw = Array.isArray(value) ? value : String(value || "").split(/[\n,]+/);
+    const seen = new Set();
+    const keywords = [];
+
+    for (const item of raw) {
+      const keyword = normalizeText(item).toLowerCase().slice(0, 80);
+      if (keyword.length < 2 || seen.has(keyword)) {
+        continue;
+      }
+      seen.add(keyword);
+      keywords.push(keyword);
+    }
+
+    return keywords.slice(0, 20);
+  }
+
+  function parseCustomLinks(value) {
+    const lines = normalizeMultiline(value)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const links = [];
+
+    for (const line of lines) {
+      const urlMatch = line.match(/https:\/\/[^\s]+/i);
+      if (!urlMatch) {
+        continue;
+      }
+
+      const url = safeHttpsUrl(urlMatch[0].replace(/[.,;!?]+$/, ""));
+      if (!url) {
+        continue;
+      }
+
+      const beforeUrl = line
+        .slice(0, urlMatch.index)
+        .trim()
+        .replace(/[:\-\u2013\u2014|]+$/, "");
+      const afterUrl = line.slice((urlMatch.index || 0) + urlMatch[0].length).trim();
+      const label =
+        normalizeText(beforeUrl) ||
+        normalizeText(afterUrl.replace(/^[-:\u2013\u2014|]+/, "")) ||
+        inferLinkLabel(url);
+
+      links.push({
+        label: label.slice(0, 80) || "Resource",
+        url
+      });
+    }
+
+    return normalizeCustomLinks(links);
+  }
+
+  function normalizeCustomLinks(value) {
+    const raw = Array.isArray(value) ? value : [];
+    const seen = new Set();
+    const links = [];
+
+    for (const item of raw) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      const url = safeHttpsUrl(item.url);
+      if (!url || seen.has(url)) {
+        continue;
+      }
+
+      seen.add(url);
+      links.push({
+        label: (normalizeText(item.label) || inferLinkLabel(url)).slice(0, 80),
+        url
+      });
+    }
+
+    return links.slice(0, MAX_PRODUCT_LINKS);
+  }
+
+  function serializeCustomLinks(links) {
+    return normalizeCustomLinks(links)
+      .map((link) => `${link.label}: ${link.url}`)
+      .join("\n");
+  }
+
+  function inferLinkLabel(value) {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.replace(/^www\./, "");
+      const slug = url.pathname
+        .split("/")
+        .filter(Boolean)
+        .pop()
+        ?.replace(/[-_]+/g, " ");
+      return normalizeText(slug || host) || "Resource";
+    } catch {
+      return "Resource";
+    }
   }
 
   function normalizePriority(value) {

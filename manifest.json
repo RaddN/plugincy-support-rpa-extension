@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Plugincy Support RPA",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Draft customer-support replies through ChatGPT, escalate sensitive tickets, and manage a WordPress developer workbench.",
   "minimum_chrome_version": "111",
   "permissions": [

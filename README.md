@@ -59,7 +59,6 @@ Use Node.js 20 or newer:
 ```powershell
 cd "C:\Users\GM Team\OneDrive\Desktop\plugincy-support-rpa-extension"
 npm install
-npx playwright install chromium
 npm run validate
 ```
 
@@ -82,17 +81,18 @@ The test:
 4. Opens `chrome://newtab/` and verifies the dashboard override.
 5. Finds the MV3 service worker and extension ID.
 6. Adds, completes, and deletes a temporary synced task.
-7. Opens `chatgpt.com` and reports whether the prompt composer is visible.
-8. Writes `test-results/newtab-dashboard.png`.
+7. Verifies the default product library records and custom quick-link CRUD.
+8. Opens `chatgpt.com` and reports whether the prompt composer is visible.
+9. Writes `test-results/newtab-dashboard.png`.
 
 Optional variables:
 
 ```powershell
 $env:CHROME_PROFILE_DIRECTORY = "Profile 1"
-$env:PLAYWRIGHT_BROWSER_CHANNEL = "chrome"
+$env:PLAYWRIGHT_BROWSER_CHANNEL = "msedge"
 ```
 
-The default Playwright channel is `chromium`, which currently has the most reliable unpacked-extension support. It still uses the local Chrome profile root passed to `launchPersistentContext`.
+The default Playwright channel is `chrome`, so the test targets installed Google Chrome and the configured Chrome profile. Use another channel only when you intentionally test a different persistent browser profile.
 
 ### Chrome profile limitation
 

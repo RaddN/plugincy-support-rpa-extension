@@ -9,9 +9,17 @@
   const PLATFORM = location.hostname === "hostinger.titan.email" ? "titan-mail" : "fluent-support";
   const UI_HOST_ID = "plugincy-support-rpa-host";
   const MAX_TICKET_LENGTH = 24000;
+  const SETTINGS_KEY = "rpa_settings";
+  const DEFAULT_SETTINGS = {
+    autoSendReplies: false,
+    autoProcessTickets: true
+  };
 
   let ui = null;
   let captureInProgress = false;
+  let autoTimer = 0;
+  let lastAutoSignature = "";
+  let lastLocationKey = location.href;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message.type !== "string") {
@@ -56,9 +64,10 @@
 
   if (window.top === window) {
     mountLauncher();
+    startAutoProcessingWatcher();
   }
 
-  async function captureAndQueue() {
+  async function captureAndQueue(options = {}) {
     if (captureInProgress) {
       return {
         accepted: false,
@@ -70,10 +79,26 @@
     setUiState("working", "Reading the current ticket…");
 
     try {
-      const ticket = scrapeCurrentTicket();
+      const ticket =
+        options.ticket ||
+        scrapeCurrentTicket({
+          requireDetail: Boolean(options.auto)
+        });
+
+      if (options.auto) {
+        const signature = createTicketSignature(ticket);
+        if (!signature || signature === lastAutoSignature) {
+          return {
+            accepted: false,
+            skipped: true,
+            reason: "duplicate"
+          };
+        }
+        lastAutoSignature = signature;
+      }
       setUiState("working", "Queued for ChatGPT…");
 
-      const response = await chrome.runtime.sendMessage({
+      const response = await safeRuntimeSendMessage({
         type: "RPA_PROCESS_TICKET",
         ticket
       });
@@ -98,7 +123,11 @@
     }
   }
 
-  function scrapeCurrentTicket() {
+  function scrapeCurrentTicket(options = {}) {
+    if (options.requireDetail && !isLikelyTicketDetailOpen()) {
+      throw new Error("A readable ticket detail view is not open yet.");
+    }
+
     const subject =
       PLATFORM === "titan-mail" ? extractTitanSubject() : extractFluentSubject();
     const text =
@@ -120,6 +149,162 @@
       ticketId,
       pageUrl: location.href
     };
+  }
+
+  function startAutoProcessingWatcher() {
+    const schedule = (delay = 1400) => {
+      window.clearTimeout(autoTimer);
+      autoTimer = window.setTimeout(() => {
+        void maybeAutoProcessCurrentTicket();
+      }, delay);
+    };
+
+    const observer = new MutationObserver(() => {
+      schedule();
+    });
+
+    const observeRoot = () => {
+      const root = document.body || document.documentElement;
+      if (!root) {
+        window.setTimeout(observeRoot, 500);
+        return;
+      }
+
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+      schedule(2500);
+    };
+
+    observeRoot();
+
+    window.setInterval(() => {
+      const key = location.href;
+      if (key !== lastLocationKey) {
+        lastLocationKey = key;
+        schedule(1100);
+      }
+    }, 1000);
+
+    try {
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName === "sync" && changes[SETTINGS_KEY]) {
+          schedule(700);
+        }
+      });
+    } catch {
+      // Existing page contexts can be invalidated during extension reload.
+    }
+  }
+
+  async function maybeAutoProcessCurrentTicket() {
+    try {
+      const settings = await readSettings();
+      if (!settings.autoProcessTickets || captureInProgress || !isLikelyTicketDetailOpen()) {
+        return;
+      }
+
+      const ticket = scrapeCurrentTicket({ requireDetail: true });
+      if (ticket.text.length < 30) {
+        return;
+      }
+
+      const signature = createTicketSignature(ticket);
+      if (!signature || signature === lastAutoSignature) {
+        return;
+      }
+
+      await captureAndQueue({
+        auto: true,
+        ticket
+      });
+    } catch {
+      // Auto mode stays quiet until a ticket detail view is readable.
+    }
+  }
+
+  function isLikelyTicketDetailOpen() {
+    const selectors =
+      PLATFORM === "titan-mail"
+        ? [
+            "[data-testid='message-subject']",
+            "[data-testid='message-body']",
+            "[data-testid*='message-content']",
+            "[class*='message-subject']",
+            "[class*='message-body']",
+            "[class*='message-view'] [role='document']",
+            "[role='main'] [role='document']"
+          ]
+        : [
+            "[data-testid='ticket-title']",
+            "[data-testid='ticket-subject']",
+            "[data-testid='conversation-message']",
+            "[data-testid*='ticket-message']",
+            ".fs_conversation_item",
+            ".fs-conversation-item",
+            ".fs_thread_item",
+            ".fs-thread-item",
+            ".ticket_conversation .conversation",
+            ".ticket-conversation .conversation",
+            ".fluent-support-conversation",
+            ".fs_ticket_body",
+            ".fs-ticket-body",
+            ".ticket_content",
+            ".ticket-content",
+            ".ticket-reply",
+            ".fs_reply_box",
+            ".fs-reply-box"
+          ];
+
+    const hasVisibleDetailNode = selectors.some((selector) =>
+      [...document.querySelectorAll(selector)].some(isMeaningfullyVisible)
+    );
+    if (hasVisibleDetailNode) {
+      return true;
+    }
+
+    if (PLATFORM === "fluent-support") {
+      return /#\/tickets\/[^/?#]+/i.test(location.hash);
+    }
+
+    return /\/mail\//i.test(location.pathname) && collectReadableIframeText().length >= 30;
+  }
+
+  function createTicketSignature(ticket) {
+    const sourceKey = [
+      ticket.source,
+      ticket.ticketId,
+      ticket.subject,
+      ticket.pageUrl,
+      ticket.text.slice(0, 500)
+    ].join("|");
+
+    let hash = 0;
+    for (let index = 0; index < sourceKey.length; index += 1) {
+      hash = (hash << 5) - hash + sourceKey.charCodeAt(index);
+      hash |= 0;
+    }
+
+    return `${ticket.source}:${ticket.ticketId || "ticket"}:${Math.abs(hash)}`;
+  }
+
+  async function readSettings() {
+    try {
+      const result = await chrome.storage.sync.get(SETTINGS_KEY);
+      const stored = result[SETTINGS_KEY] || {};
+      return {
+        ...DEFAULT_SETTINGS,
+        autoSendReplies: Boolean(stored.autoSendReplies),
+        autoProcessTickets:
+          stored.autoProcessTickets === undefined
+            ? DEFAULT_SETTINGS.autoProcessTickets
+            : Boolean(stored.autoProcessTickets)
+      };
+    } catch {
+      return DEFAULT_SETTINGS;
+    }
   }
 
   function extractFluentSubject() {
@@ -396,8 +581,8 @@
 
     setEditorValue(editor, message.response);
 
-    const settingsResult = await chrome.storage.sync.get("rpa_settings");
-    const autoSend = Boolean(settingsResult.rpa_settings?.autoSendReplies);
+    const settings = await readSettings();
+    const autoSend = Boolean(settings.autoSendReplies);
     if (autoSend) {
       const sent = await clickSupportSendButton();
       if (!sent) {
@@ -688,6 +873,30 @@
     ui.status.textContent = status;
     ui.button.disabled = state === "working";
     ui.button.textContent = state === "working" ? "Working…" : "Draft with ChatGPT";
+  }
+
+  async function safeRuntimeSendMessage(payload) {
+    try {
+      if (typeof chrome === "undefined" || !chrome.runtime?.id) {
+        return {
+          ok: false,
+          error: "Extension context was reloaded. Reload this support tab and try again."
+        };
+      }
+      return await chrome.runtime.sendMessage(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || "");
+      if (/Extension context invalidated|context invalidated/i.test(message)) {
+        return {
+          ok: false,
+          error: "Extension context was reloaded. Reload this support tab and try again."
+        };
+      }
+      return {
+        ok: false,
+        error: message || "The extension service worker could not be reached."
+      };
+    }
   }
 
   async function waitFor(getValue, timeoutMs) {

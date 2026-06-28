@@ -12,7 +12,7 @@ const userDataDir = path.resolve(
   process.env.CHROME_USER_DATA_DIR || defaultChromeUserDataDir()
 );
 const profileDirectory = process.env.CHROME_PROFILE_DIRECTORY || "Default";
-const browserChannel = process.env.PLAYWRIGHT_BROWSER_CHANNEL || "chromium";
+const browserChannel = process.env.PLAYWRIGHT_BROWSER_CHANNEL || "chrome";
 const resultsDir = path.join(extensionPath, "test-results");
 const screenshotPath = path.join(resultsDir, "newtab-dashboard.png");
 const allowRunningChrome = process.env.RPA_ALLOW_RUNNING_CHROME === "1";
@@ -62,18 +62,8 @@ async function run() {
   console.log(`Extension: ${extensionPath}`);
 
   try {
-    context = await chromium.launchPersistentContext(userDataDir, {
-      channel: browserChannel,
-      headless: false,
-      viewport: null,
-      args: [
-        `--profile-directory=${profileDirectory}`,
-        `--disable-extensions-except=${extensionPath}`,
-        `--load-extension=${extensionPath}`,
-        "--no-first-run",
-        "--no-default-browser-check"
-      ]
-    });
+    context = await launchPersistentContext();
+    await reloadUnpackedExtension();
   } catch (error) {
     throw new Error(
       [
@@ -104,6 +94,52 @@ async function run() {
   await dashboard.locator("#page-title").waitFor({ state: "visible" });
   await dashboard.getByRole("heading", { name: "Today’s work" }).waitFor();
   await dashboard.getByRole("heading", { name: "Developer updates" }).waitFor();
+
+  await dashboard.locator("#focus-settings").click();
+  await dashboard.waitForSelector("#preferences-section:not([hidden])", {
+    timeout: 10000
+  });
+
+  assert.equal(
+    await dashboard.locator("#autoprocess-toggle").isChecked(),
+    true,
+    "Auto-draft new tickets should be enabled by default."
+  );
+
+  await dashboard
+    .locator(".product-card", { has: dashboard.getByText("Dynamic Ajax Product Filter") })
+    .waitFor({ state: "visible" });
+  await dashboard
+    .locator(".product-card", { has: dashboard.getByText("One Page Quick Checkout") })
+    .waitFor({ state: "visible" });
+  await dashboard
+    .locator(".product-card", {
+      has: dashboard.getByText("Multi Location Product & Inventory Management for WooCommerce")
+    })
+    .waitFor({ state: "visible" });
+
+  const smokeProduct = `Playwright Smoke Plugin ${Date.now()}`;
+  await dashboard.locator("#product-name").fill(smokeProduct);
+  await dashboard.locator("#product-keywords").fill("playwright smoke, test plugin");
+  await dashboard.locator("#product-github").fill("https://github.com/plugincy/playwright-smoke-plugin");
+  await dashboard.locator("#product-docs").fill("https://plugincy.com/docs/playwright-smoke-plugin/");
+  await dashboard.locator("#product-landing").fill("https://plugincy.com/playwright-smoke-plugin/");
+  await dashboard
+    .locator("#product-custom-links")
+    .fill(
+      "Video walkthrough: https://plugincy.com/tutorials/playwright-smoke-plugin-video/\nLive demo: https://demo.plugincy.com/playwright-smoke-plugin/"
+    );
+  await dashboard.locator("#product-notes").fill("Temporary Playwright smoke resource.");
+  await dashboard.getByRole("button", { name: "Save product" }).click();
+
+  const productCard = dashboard.locator(".product-card", {
+    has: dashboard.getByText(smokeProduct, { exact: true })
+  });
+  await productCard.waitFor({ state: "visible" });
+  await productCard.getByText("Video walkthrough").waitFor();
+  await productCard.getByText("Live demo").waitFor();
+  await productCard.getByRole("button", { name: "Delete" }).click();
+  await productCard.waitFor({ state: "detached" });
 
   const smokeTask = `Playwright smoke task ${Date.now()}`;
   await dashboard.locator("#task-title").fill(smokeTask);
@@ -139,11 +175,53 @@ async function run() {
   console.log(`Extension ID: ${extensionId}`);
   console.log("New Tab override: PASS");
   console.log("Synced task add/complete/delete: PASS");
+  console.log("Product library add/custom-links/delete: PASS");
+  console.log("Auto-draft default setting: PASS");
   console.log(`ChatGPT opened: PASS (${composerVisible ? "composer detected" : "sign-in/UI check needed"})`);
   console.log(`Dashboard screenshot: ${screenshotPath}`);
 
   await context.close();
   context = null;
+}
+
+async function launchPersistentContext() {
+  return chromium.launchPersistentContext(userDataDir, {
+    channel: browserChannel,
+    headless: false,
+    viewport: null,
+    args: [
+      `--profile-directory=${profileDirectory}`,
+      `--disable-extensions-except=${extensionPath}`,
+      `--load-extension=${extensionPath}`,
+      "--no-first-run",
+      "--no-default-browser-check"
+    ]
+  });
+}
+
+async function reloadUnpackedExtension() {
+  const serviceWorker = await findRpaServiceWorker(context);
+  assert.ok(serviceWorker, "Plugincy Support RPA service worker was not registered.");
+  const extensionId = new URL(serviceWorker.url()).host;
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`chrome-extension://${extensionId}/dashboard/newtab.html`, {
+      waitUntil: "domcontentloaded"
+    });
+    await page.evaluate(() => {
+      setTimeout(() => chrome.runtime.reload(), 0);
+      return true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  } catch {
+    // The extension page can close itself during chrome.runtime.reload().
+  } finally {
+    await context.close().catch(() => undefined);
+    context = null;
+  }
+
+  context = await launchPersistentContext();
 }
 
 async function findRpaServiceWorker(browserContext) {

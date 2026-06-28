@@ -1,6 +1,6 @@
 {
   "name": "plugincy-support-rpa-extension",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Manifest V3 support automation extension and persistent-profile Playwright smoke test.",
   "scripts": {
