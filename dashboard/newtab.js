@@ -8,6 +8,8 @@
   const SETTINGS_KEY = "rpa_settings";
   const ACTIVITY_KEY = "rpa_activity";
   const NEWS_CACHE_KEY = "rpa_news_cache";
+  const RELEASE_CACHE_KEY = "rpa_release_cache";
+  const DIRECTORY_WATCH_KEY = "rpa_directory_watch";
   const MAX_TASKS = 80;
   const MAX_PRODUCTS = 150;
   const MAX_PRODUCT_LINKS = 30;
@@ -15,6 +17,8 @@
   const state = {
     tasks: [],
     products: [],
+    releaseCache: null,
+    directoryWatch: {},
     filter: "all",
     preferencesOpen: false,
     settings: {
@@ -62,6 +66,8 @@
     refreshActivity: document.getElementById("refresh-activity"),
     newsList: document.getElementById("news-list"),
     refreshNews: document.getElementById("refresh-news"),
+    releaseList: document.getElementById("release-list"),
+    refreshReleases: document.getElementById("refresh-releases"),
     healthList: document.getElementById("health-list"),
     refreshHealth: document.getElementById("refresh-health"),
     toastRegion: document.getElementById("toast-region")
@@ -81,6 +87,7 @@
       loadProducts(),
       loadActivity(),
       loadNews(),
+      loadReleases(),
       loadSessionHealth()
     ]);
 
@@ -173,6 +180,10 @@
       void loadNews({ force: true });
     });
 
+    elements.refreshReleases.addEventListener("click", () => {
+      void loadReleases({ force: true });
+    });
+
     elements.refreshHealth.addEventListener("click", () => {
       void loadSessionHealth();
     });
@@ -206,6 +217,15 @@
 
       if (areaName === "local" && changes[NEWS_CACHE_KEY]) {
         void renderNewsCache(changes[NEWS_CACHE_KEY].newValue);
+      }
+
+      if (areaName === "local" && changes[RELEASE_CACHE_KEY]) {
+        renderReleaseCache(changes[RELEASE_CACHE_KEY].newValue);
+      }
+
+      if (areaName === "local" && changes[DIRECTORY_WATCH_KEY]) {
+        state.directoryWatch = changes[DIRECTORY_WATCH_KEY].newValue || {};
+        renderReleaseCache(state.releaseCache);
       }
     });
   }
@@ -594,7 +614,7 @@
       const copy = document.createElement("p");
       title.textContent = "Add your first plugin resource";
       copy.textContent =
-        "ChatGPT will use configured GitHub, docs, landing and support links when drafting replies.";
+        "ChatGPT will inspect configured code, documentation and product references before drafting replies.";
       wrapper.append(title, copy);
       empty.append(wrapper);
       elements.productList.append(empty);
@@ -993,7 +1013,7 @@
       return;
     }
 
-    articles.slice(0, 6).forEach((article) => {
+    articles.slice(0, 12).forEach((article) => {
       elements.newsList.append(createNewsItem(article));
     });
   }
@@ -1021,6 +1041,12 @@
         node.querySelector("updated")?.textContent ||
         "";
       const publishedAt = Date.parse(dateText) || 0;
+      const rawSummary =
+        node.querySelector("description")?.textContent ||
+        node.getElementsByTagName("content:encoded")[0]?.textContent ||
+        node.querySelector("summary")?.textContent ||
+        "";
+      const summary = createShortSummary(rawSummary);
 
       if (!title || !link) {
         return [];
@@ -1032,18 +1058,16 @@
           link,
           sourceId: source.id,
           sourceName: source.name,
-          publishedAt
+          publishedAt,
+          summary
         }
       ];
     });
   }
 
   function createNewsItem(article) {
-    const item = document.createElement("a");
+    const item = document.createElement("article");
     item.className = "news-item";
-    item.href = article.link;
-    item.target = "_blank";
-    item.rel = "noreferrer";
 
     const mark = document.createElement("span");
     mark.className = "news-mark";
@@ -1054,11 +1078,18 @@
       mark.textContent = "WP";
     }
 
-    const copy = document.createElement("div");
+    const copy = document.createElement("a");
     copy.className = "news-copy";
+    copy.href = article.link;
+    copy.target = "_blank";
+    copy.rel = "noreferrer";
     const title = document.createElement("p");
     title.className = "news-title";
     title.textContent = article.title;
+    const summary = document.createElement("p");
+    summary.className = "news-summary";
+    summary.textContent =
+      article.summary || `A recent update from ${article.sourceName}.`;
     const meta = document.createElement("div");
     meta.className = "news-meta";
     const source = document.createElement("span");
@@ -1074,9 +1105,281 @@
       date.textContent = "Recent";
     }
     meta.append(source, date);
-    copy.append(title, meta);
-    item.append(mark, copy);
+    copy.append(title, summary, meta);
+
+    const share = document.createElement("button");
+    share.type = "button";
+    share.className = "news-share";
+    share.setAttribute("aria-label", `Share ${article.title}`);
+    share.title = "Share update with a short summary";
+    share.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="18" cy="5" r="2.5"></circle>
+        <circle cx="6" cy="12" r="2.5"></circle>
+        <circle cx="18" cy="19" r="2.5"></circle>
+        <path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5"></path>
+      </svg>
+    `;
+    share.addEventListener("click", () => {
+      void shareNewsArticle(article);
+    });
+
+    item.append(mark, copy, share);
     return item;
+  }
+
+  function createShortSummary(value) {
+    const html = new DOMParser().parseFromString(
+      `<body>${String(value || "")}</body>`,
+      "text/html"
+    );
+    let summary = normalizeText(html.body?.textContent || value || "")
+      .replace(/\bThe post\b[\s\S]*?\bappeared first on\b[\s\S]*$/i, "")
+      .replace(/\bContinue reading\b[\s\S]*$/i, "")
+      .trim();
+
+    if (summary.length <= 220) {
+      return summary;
+    }
+
+    summary = summary.slice(0, 220);
+    const lastSpace = summary.lastIndexOf(" ");
+    return `${summary.slice(0, lastSpace > 150 ? lastSpace : 220).trim()}…`;
+  }
+
+  async function shareNewsArticle(article) {
+    const summary =
+      article.summary || `A recent developer update from ${article.sourceName}.`;
+
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: article.title,
+          text: summary,
+          url: article.link
+        });
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(
+        `${article.title}\n\n${summary}\n\n${article.link}`
+      );
+      showToast("News summary and link copied for sharing.", "success");
+    } catch {
+      showToast("This browser could not open sharing or copy the update.", "error");
+    }
+  }
+
+  async function loadReleases({ force = false } = {}) {
+    setIconButtonWorking(elements.refreshReleases, true);
+    elements.releaseList.replaceChildren(
+      createLoadingRow("Checking WordPress.org releases…")
+    );
+
+    try {
+      if (force) {
+        const response = await chrome.runtime.sendMessage({
+          type: "RPA_REFRESH_RELEASES"
+        });
+        if (!response?.ok) {
+          throw new Error(response?.error || "Release refresh failed.");
+        }
+      }
+
+      let result = await chrome.storage.local.get([
+        RELEASE_CACHE_KEY,
+        DIRECTORY_WATCH_KEY
+      ]);
+      let cache = result[RELEASE_CACHE_KEY];
+      if (!cache?.plugins?.length) {
+        const response = await chrome.runtime.sendMessage({
+          type: "RPA_REFRESH_RELEASES"
+        });
+        if (!response?.ok) {
+          throw new Error(response?.error || "Release refresh failed.");
+        }
+        result = await chrome.storage.local.get([
+          RELEASE_CACHE_KEY,
+          DIRECTORY_WATCH_KEY
+        ]);
+        cache = result[RELEASE_CACHE_KEY];
+      }
+
+      state.directoryWatch = result[DIRECTORY_WATCH_KEY] || {};
+      renderReleaseCache(cache);
+      if (force) {
+        showToast("Plugin release status refreshed.", "success");
+      }
+    } catch (error) {
+      elements.releaseList.replaceChildren(
+        createLoadingRow(getErrorMessage(error, "Release status is unavailable."))
+      );
+    } finally {
+      setIconButtonWorking(elements.refreshReleases, false);
+    }
+  }
+
+  function renderReleaseCache(cache) {
+    state.releaseCache = cache || null;
+    elements.releaseList.replaceChildren();
+    const plugins = Array.isArray(cache?.plugins) ? cache.plugins : [];
+
+    if (!plugins.length) {
+      elements.releaseList.append(
+        createLoadingRow("No monitored WordPress.org plugins are configured.")
+      );
+      return;
+    }
+
+    for (const plugin of plugins) {
+      elements.releaseList.append(createReleaseRow(plugin));
+    }
+  }
+
+  function createReleaseRow(plugin) {
+    const row = document.createElement("a");
+    row.className = "release-row";
+    row.href = safeHttpsUrl(plugin.url);
+    row.target = "_blank";
+    row.rel = "noreferrer";
+
+    const head = document.createElement("div");
+    head.className = "release-head";
+    const name = document.createElement("span");
+    name.className = "release-name";
+    name.textContent = normalizeText(plugin.name) || normalizeText(plugin.slug);
+    const version = document.createElement("span");
+    version.className = "release-version";
+    version.textContent = plugin.version ? `v${plugin.version}` : "Version unavailable";
+    head.append(name, version);
+
+    const deadline = document.createElement("span");
+    deadline.className = "release-deadline";
+    const meta = document.createElement("div");
+    meta.className = "release-meta";
+
+    if (!plugin.ok) {
+      row.dataset.state = "error";
+      deadline.textContent = "Could not check release status.";
+      meta.textContent = normalizeText(plugin.error) || "WordPress.org request failed.";
+      row.append(head, deadline, meta);
+      return row;
+    }
+
+    const deadlineAt = Number(plugin.deadlineAt || 0);
+    const daysRemaining = Math.ceil((deadlineAt - Date.now()) / (24 * 60 * 60 * 1000));
+    if (daysRemaining < 0) {
+      const daysOverdue = Math.abs(daysRemaining);
+      row.dataset.state = "overdue";
+      deadline.textContent = `Release overdue by ${daysOverdue} ${
+        daysOverdue === 1 ? "day" : "days"
+      }.`;
+    } else if (daysRemaining === 0) {
+      row.dataset.state = "due-soon";
+      deadline.textContent = "Must release a new version today.";
+    } else {
+      row.dataset.state = daysRemaining <= 7 ? "due-soon" : "current";
+      deadline.textContent = `Must release a new version in ${daysRemaining} ${
+        daysRemaining === 1 ? "day" : "days"
+      }.`;
+    }
+
+    const lastUpdatedAt = Number(plugin.lastUpdatedAt || 0);
+    const updated = document.createElement("span");
+    updated.textContent = lastUpdatedAt
+      ? `Last updated ${new Intl.DateTimeFormat(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric"
+        }).format(lastUpdatedAt)}`
+      : "Last update date unavailable";
+    meta.append(updated);
+
+    const stats = document.createElement("div");
+    stats.className = "release-stats";
+    const activeInstalls = document.createElement("span");
+    activeInstalls.textContent = `${formatCompactCount(plugin.activeInstalls)} active installs`;
+    const rating = document.createElement("span");
+    const ratingOutOfFive = Number(plugin.rating || 0) / 20;
+    rating.textContent = `${ratingOutOfFive.toFixed(1)}/5 rating (${formatCompactCount(
+      plugin.numRatings
+    )})`;
+    const support = document.createElement("span");
+    support.textContent = `${formatCompactCount(plugin.supportThreads)} support ${
+      Number(plugin.supportThreads) === 1 ? "topic" : "topics"
+    } · ${formatCompactCount(plugin.supportThreadsResolved)} resolved`;
+    stats.append(activeInstalls, rating, support);
+
+    const recentActivity = createReleaseActivity(plugin);
+    row.append(head, deadline, meta, stats);
+    if (recentActivity) {
+      row.append(recentActivity);
+    }
+    return row;
+  }
+
+  function createReleaseActivity(plugin) {
+    const slug = plugin.slug;
+    const feeds =
+      state.directoryWatch?.feeds && typeof state.directoryWatch.feeds === "object"
+        ? state.directoryWatch.feeds
+        : {};
+    const supportRecent = feeds[`${slug}:support`]?.recent;
+    const reviewRecent = feeds[`${slug}:review`]?.recent;
+    const entries = [];
+
+    if (supportRecent?.title) {
+      entries.push(["New support", supportRecent]);
+    } else if (Number(plugin.recentMetrics?.newSupportThreads) > 0) {
+      entries.push([
+        "New support",
+        {
+          count: plugin.recentMetrics.newSupportThreads,
+          title: "Support topic count increased."
+        }
+      ]);
+    }
+
+    if (reviewRecent?.title) {
+      entries.push(["New rating/review", reviewRecent]);
+    } else if (Number(plugin.recentMetrics?.newRatings) > 0) {
+      entries.push([
+        "New rating/review",
+        {
+          count: plugin.recentMetrics.newRatings,
+          title: "Rating count increased."
+        }
+      ]);
+    }
+
+    if (!entries.length) {
+      return null;
+    }
+
+    const activity = document.createElement("div");
+    activity.className = "release-activity";
+    for (const [label, recent] of entries) {
+      const item = document.createElement("span");
+      item.textContent = `${label}${Number(recent.count) > 1 ? ` (${recent.count})` : ""}: ${
+        recent.title
+      }`;
+      activity.append(item);
+    }
+    return activity;
+  }
+
+  function formatCompactCount(value) {
+    const count = Math.max(0, Number(value || 0));
+    return new Intl.NumberFormat(undefined, {
+      notation: count >= 1000 ? "compact" : "standard",
+      maximumFractionDigits: 1
+    }).format(count);
   }
 
   async function loadSessionHealth() {

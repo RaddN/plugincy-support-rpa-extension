@@ -13,12 +13,8 @@
     <div class="app-shell">
       <aside class="sidebar" aria-label="Workbench navigation">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" role="img">
-              <path d="M14.7 3.3a5.7 5.7 0 0 0-7.1 7.8l-4.3 4.3a2.1 2.1 0 1 0 3 3l4.3-4.3a5.7 5.7 0 0 0 7.8-7.1l-3.2 3.2-2.7-.7-.7-2.7 2.9-3.5Z"/>
-            </svg>
-          </span>
-          <span>Plugincy<br>Workbench</span>
+          <img class="brand-logo" src="../brand_logo.png" alt="Plugincy">
+          <span class="brand-product">Workbench</span>
         </div>
 
         <nav class="primary-nav" aria-label="Primary">
@@ -116,7 +112,7 @@
               <div class="section-heading">
                 <div>
                   <h2 id="preferences-title">Preferences & product resources</h2>
-                  <p class="section-kicker">Configure automation behavior and the plugin links ChatGPT should use in replies.</p>
+                  <p class="section-kicker">Configure automation behavior and the code/documentation resources ChatGPT should inspect before drafting replies.</p>
                 </div>
                 <button class="text-button" id="close-preferences" type="button">Close</button>
               </div>
@@ -146,7 +142,7 @@
                 <div class="product-form-head">
                   <div>
                     <h3>Product/plugin library</h3>
-                    <p>These records sync with Chrome and are matched against ticket text. Matched links are sent to ChatGPT as quick-link context.</p>
+                    <p>These records sync with Chrome and are matched against ticket text. Links are analysis references for checking code, documentation, released behavior, and product context—not automatic links for customer replies.</p>
                   </div>
                   <div class="product-actions">
                     <button class="secondary-primary-button" id="product-save" type="submit">Save product</button>
@@ -180,7 +176,7 @@
                     <input id="product-support" type="url" inputmode="url" placeholder="https://plugincy.com/support/">
                   </label>
                   <label class="product-notes-field">
-                    <span>Additional quick links</span>
+                    <span>Additional reference links</span>
                     <textarea id="product-custom-links" rows="4" maxlength="3000" placeholder="One per line. Example:&#10;Video walkthrough: https://youtube.com/...&#10;Live demo: https://demo.plugincy.com/...&#10;CodeCanyon page: https://..."></textarea>
                   </label>
                   <label class="product-notes-field">
@@ -261,6 +257,20 @@
                 </button>
               </div>
               <div class="news-list" id="news-list" aria-live="polite"></div>
+            </section>
+
+            <section class="release-section" aria-labelledby="release-title">
+              <div class="section-heading">
+                <h2 id="release-title">Plugin release checker</h2>
+                <button class="icon-button" id="refresh-releases" type="button" aria-label="Refresh plugin release status">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 7h-5V2"/>
+                    <path d="M20 7a8 8 0 1 0 1 8"/>
+                  </svg>
+                </button>
+              </div>
+              <p class="release-note">Tracks the 30-day release deadline, active installs, ratings, support totals, and newly detected forum activity.</p>
+              <div class="release-list" id="release-list" aria-live="polite"></div>
             </section>
 
             <section class="health-section" aria-labelledby="health-title">

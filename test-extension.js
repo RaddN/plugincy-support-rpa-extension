@@ -94,6 +94,18 @@ async function run() {
   await dashboard.locator("#page-title").waitFor({ state: "visible" });
   await dashboard.getByRole("heading", { name: "Today’s work" }).waitFor();
   await dashboard.getByRole("heading", { name: "Developer updates" }).waitFor();
+  await dashboard.getByRole("heading", { name: "Plugin release checker" }).waitFor();
+  await dashboard.locator(".release-row").first().waitFor({ state: "visible" });
+  assert.equal(
+    await dashboard.locator(".release-row").count(),
+    3,
+    "The three monitored WordPress.org plugins should be shown."
+  );
+  assert.equal(
+    await dashboard.locator(".release-stats").count(),
+    3,
+    "Release rows should include installs, ratings, and support totals."
+  );
 
   await dashboard.locator("#focus-settings").click();
   await dashboard.waitForSelector("#preferences-section:not([hidden])", {
@@ -175,7 +187,8 @@ async function run() {
   console.log(`Extension ID: ${extensionId}`);
   console.log("New Tab override: PASS");
   console.log("Synced task add/complete/delete: PASS");
-  console.log("Product library add/custom-links/delete: PASS");
+  console.log("Product library add/reference-links/delete: PASS");
+  console.log("WordPress.org release checker: PASS");
   console.log("Auto-draft default setting: PASS");
   console.log(`ChatGPT opened: PASS (${composerVisible ? "composer detected" : "sign-in/UI check needed"})`);
   console.log(`Dashboard screenshot: ${screenshotPath}`);

@@ -8,10 +8,17 @@ const requiredFiles = [
   "manifest.json",
   "background.js",
   "content/scraper.js",
+  "content/source-notifier.js",
+  "content/prompt-builder.js",
   "content/gpt-controller.js",
   "dashboard/newtab.html",
   "dashboard/newtab.css",
   "dashboard/newtab.js",
+  "brand_logo.png",
+  "assets/icons/icon-16.png",
+  "assets/icons/icon-32.png",
+  "assets/icons/icon-48.png",
+  "assets/icons/icon-128.png",
   "test-extension.js"
 ];
 
@@ -21,11 +28,20 @@ if (missingFiles.length) {
 }
 
 const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"));
-const expectedPermissions = ["activeTab", "tabs", "storage", "scripting", "alarms"];
+const expectedPermissions = [
+  "activeTab",
+  "tabs",
+  "storage",
+  "scripting",
+  "alarms",
+  "notifications"
+];
 const expectedHosts = [
   "https://chatgpt.com/*",
   "https://hostinger.titan.email/*",
-  "https://plugincy.com/*"
+  "https://plugincy.com/*",
+  "https://wordpress.org/*",
+  "https://api.wordpress.org/*"
 ];
 
 if (manifest.manifest_version !== 3) {
@@ -48,6 +64,12 @@ if (manifest.background?.service_worker !== "background.js") {
   throw new Error("The MV3 service worker must be background.js.");
 }
 
+for (const size of ["16", "32", "48", "128"]) {
+  if (manifest.icons?.[size] !== `assets/icons/icon-${size}.png`) {
+    throw new Error(`Missing or incorrect manifest icon for ${size}px.`);
+  }
+}
+
 if (manifest.chrome_url_overrides?.newtab !== "dashboard/newtab.html") {
   throw new Error("The New Tab override must point to dashboard/newtab.html.");
 }
@@ -55,8 +77,11 @@ if (manifest.chrome_url_overrides?.newtab !== "dashboard/newtab.html") {
 for (const file of [
   "background.js",
   "content/scraper.js",
+  "content/source-notifier.js",
+  "content/prompt-builder.js",
   "content/gpt-controller.js",
   "dashboard/newtab.js",
+  "test-prompt-builder.js",
   "test-extension.js"
 ]) {
   execFileSync(process.execPath, ["--check", join(root, file)], {

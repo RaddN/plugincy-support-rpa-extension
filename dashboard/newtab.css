@@ -163,29 +163,26 @@ svg {
 }
 
 .brand {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  min-height: 44px;
-  padding: 0 10px;
-  font-size: 18px;
-  font-weight: 760;
-  letter-spacing: -0.025em;
-  line-height: 1.05;
-}
-
-.brand-mark {
   display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  color: #ffffff;
+  min-height: 58px;
+  gap: 5px;
+  align-content: center;
+  padding: 8px 10px;
 }
 
-.brand-mark svg {
-  width: 29px;
-  height: 29px;
-  stroke-width: 1.6;
+.brand-logo {
+  display: block;
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+}
+
+.brand-product {
+  color: var(--sidebar-muted);
+  font-size: 11px;
+  font-weight: 720;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .primary-nav {
@@ -1170,30 +1167,39 @@ svg {
 }
 
 .news-section,
+.release-section,
 .health-section {
   padding: 30px 28px;
 }
 
+.release-section,
 .health-section {
   border-top: 1px solid var(--border);
 }
 
 .news-list,
+.release-list,
 .health-list {
   margin-top: 12px;
 }
 
 .news-item {
   display: grid;
-  grid-template-columns: 35px minmax(0, 1fr);
+  grid-template-columns: 35px minmax(0, 1fr) auto;
   gap: 12px;
+  align-items: start;
   padding: 15px 0;
   border-bottom: 1px solid var(--border);
+  color: inherit;
+}
+
+.news-copy {
+  min-width: 0;
   color: inherit;
   text-decoration: none;
 }
 
-.news-item:hover .news-title {
+.news-copy:hover .news-title {
   color: var(--accent);
 }
 
@@ -1215,10 +1221,6 @@ svg {
   color: #ffffff;
 }
 
-.news-copy {
-  min-width: 0;
-}
-
 .news-title {
   display: -webkit-box;
   overflow: hidden;
@@ -1232,6 +1234,17 @@ svg {
   transition: color 140ms ease;
 }
 
+.news-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 6px 0 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .news-meta {
   display: flex;
   justify-content: space-between;
@@ -1239,6 +1252,120 @@ svg {
   margin-top: 6px;
   color: var(--muted);
   font-size: 10px;
+}
+
+.news-share {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.news-share:hover {
+  border-color: var(--border-strong);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.news-share svg {
+  width: 15px;
+  height: 15px;
+}
+
+.release-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.release-row {
+  display: grid;
+  gap: 5px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  text-decoration: none;
+}
+
+.release-row:hover .release-name {
+  color: var(--accent);
+}
+
+.release-head,
+.release-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.release-name {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.4;
+  transition: color 140ms ease;
+}
+
+.release-version,
+.release-meta {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.release-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.release-stats span {
+  position: relative;
+}
+
+.release-activity {
+  display: grid;
+  gap: 4px;
+  margin-top: 3px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.release-activity span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.release-deadline {
+  color: var(--success);
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.release-row[data-state="due-soon"] .release-deadline {
+  color: var(--warning);
+}
+
+.release-row[data-state="overdue"] .release-deadline,
+.release-row[data-state="error"] .release-deadline {
+  color: var(--danger);
 }
 
 .health-row {
@@ -1378,8 +1505,15 @@ svg {
 
   .brand {
     justify-content: center;
-    padding: 0;
-    font-size: 0;
+    padding: 0 8px;
+  }
+
+  .brand-logo {
+    width: 54px;
+  }
+
+  .brand-product {
+    display: none;
   }
 
   .primary-nav {
@@ -1451,9 +1585,14 @@ svg {
     border-left: 0;
   }
 
-  .health-section {
+  .release-section {
     border-top: 0;
     border-left: 1px solid var(--border);
+  }
+
+  .health-section {
+    grid-column: 1 / -1;
+    border-left: 0;
   }
 
   .preference-grid,
@@ -1615,6 +1754,11 @@ svg {
   }
 
   .health-section {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .release-section {
     border-top: 1px solid var(--border);
     border-left: 0;
   }

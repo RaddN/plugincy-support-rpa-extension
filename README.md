@@ -9,15 +9,18 @@ No API key is used. The extension operates through page DOM content scripts in y
 - Professional New Tab workbench with:
   - To-do items stored as separate `chrome.storage.sync` records to stay within per-item sync quotas.
   - Add, complete, reprioritize, filter, and delete actions.
-  - WordPress and WooCommerce developer RSS updates.
+  - Up to 12 WordPress and WooCommerce developer RSS updates with a short-summary share action (or clipboard fallback).
+  - A WordPress.org checker for the three Plugincy plugins, with a 30-day release deadline, active installs, ratings, support totals, and recent new support/rating activity.
+  - Desktop notifications for newly detected Fluent Support tickets, Titan unread mail, and new WordPress.org plugin ratings/reviews or support topics.
   - Recent automation activity.
   - Open-tab/session health indicators.
-  - Quick links to Fluent Support, Titan Mail, ChatGPT, and WordPress Admin.
+  - Navigation links to Fluent Support, Titan Mail, ChatGPT, and WordPress Admin.
   - Light and dark themes.
 - Support-page scraper for:
   - `https://plugincy.com/wp-admin/admin.php?page=fluent-support#/tickets`
   - `https://hostinger.titan.email/mail/`
 - ChatGPT DOM controller with a serialized job queue and completion `MutationObserver`.
+- Product repositories, documentation, landing pages, and other configured URLs are analysis references. The prompt uses them to verify code and product behavior; it does not automatically expose them as customer-facing quick links.
 - Local credential detection. Tickets containing likely usernames/passwords or WordPress admin access details are not sent to ChatGPT.
 - AI escalation handling. `ESCALATE_TO_HUMAN: ...` results become high-priority synced tasks instead of replies.
 - Draft-only insertion by default. Automatic submission is an explicit dashboard opt-in.
@@ -44,7 +47,16 @@ The extension creates and reuses its own pinned ChatGPT tab during ticket proces
 3. Leave the pinned ChatGPT tab available while the response is generated.
 4. Review the inserted draft and send it.
 
-If temporary WordPress credentials are detected, the ticket is escalated locally and no ticket text is sent to ChatGPT. If ChatGPT cannot resolve the issue from the provided code or determines that runtime access is needed, the response must use `ESCALATE_TO_HUMAN: ...`; the extension converts that summary into a high-priority to-do.
+If temporary WordPress credentials are detected, the ticket is escalated locally and no ticket text is sent to ChatGPT. `ESCALATE_TO_HUMAN: ...` is reserved for tickets where a safe customer-facing draft cannot be produced because sensitive access details are already present, immediate internal/manual action is required, or another genuine safety boundary applies.
+
+Brief or incomplete reports are not escalated by default. The generated reply asks for the exact missing diagnostic details. When hands-on investigation is reasonably required, it asks the customer to provide minimum temporary staging/admin access through the approved secure support channel.
+
+## Notifications and release checks
+
+- Fluent Support and Titan notifications are detected from unread/new markers exposed by their open browser tabs. Keep those services open for source notifications; DOM changes in either service may require selector maintenance.
+- WordPress.org support and review feeds are checked every 15 minutes. The first successful check establishes a baseline so existing topics and reviews do not trigger a notification flood.
+- Release metadata is read from the official WordPress.org Plugins API every six hours and on manual refresh. Each monitored plugin is due 30 days after its reported `last_updated` value.
+- Selecting a desktop notification focuses an existing matching tab or opens the target in a new tab.
 
 ## Auto-send safety
 
@@ -81,9 +93,10 @@ The test:
 4. Opens `chrome://newtab/` and verifies the dashboard override.
 5. Finds the MV3 service worker and extension ID.
 6. Adds, completes, and deletes a temporary synced task.
-7. Verifies the default product library records and custom quick-link CRUD.
-8. Opens `chatgpt.com` and reports whether the prompt composer is visible.
-9. Writes `test-results/newtab-dashboard.png`.
+7. Verifies the default product library records and custom reference-link CRUD.
+8. Verifies the plugin release checker is present.
+9. Opens `chatgpt.com` and reports whether the prompt composer is visible.
+10. Writes `test-results/newtab-dashboard.png`.
 
 Optional variables:
 
@@ -112,17 +125,19 @@ That fallback remains persistent between test runs; it is not a clean or disposa
 
 ```powershell
 npm run validate
+npm run test:unit
 ```
 
-This validates the manifest contract, required files, requested permissions/hosts, New Tab override, service worker entry, and JavaScript syntax.
+Validation checks the manifest contract, required files, requested permissions/hosts, New Tab override, service worker entry, and JavaScript syntax. The unit test verifies that product links are analysis references and that incomplete tickets request details/access instead of escalating automatically.
 
 ## Security boundaries
 
 - Credential detection runs before ChatGPT dispatch.
 - Credential values are never copied into task summaries or activity logs.
 - Dynamic RSS and ticket text are rendered with `textContent`, not HTML.
+- Source notifications store only local hashed unread-item fingerprints; ticket and email body content is not copied into notification state.
 - No external scripts, CDNs, analytics, API keys, or remote code are used.
-- Job state is held in `chrome.storage.session`; task data uses `chrome.storage.sync`; activity/news caches use `chrome.storage.local`.
+- Job state is held in `chrome.storage.session`; task data uses `chrome.storage.sync`; activity/news/release/forum notification state uses `chrome.storage.local`.
 - Ticket automation is accepted only from the configured Hostinger and Plugincy support origins.
 
 ## Expected maintenance

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Plugincy Support RPA",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Draft customer-support replies through ChatGPT, escalate sensitive tickets, and manage a WordPress developer workbench.",
   "minimum_chrome_version": "111",
   "permissions": [
@@ -9,21 +9,33 @@
     "tabs",
     "storage",
     "scripting",
-    "alarms"
+    "alarms",
+    "notifications"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://hostinger.titan.email/*",
     "https://plugincy.com/*",
     "https://wordpress.org/*",
+    "https://api.wordpress.org/*",
     "https://developer.woocommerce.com/*"
   ],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
   "action": {
-    "default_title": "Open Plugincy Workbench"
+    "default_title": "Open Plugincy Workbench",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png"
+    }
   },
   "chrome_url_overrides": {
     "newtab": "dashboard/newtab.html"
@@ -35,7 +47,8 @@
         "https://plugincy.com/wp-admin/*"
       ],
       "js": [
-        "content/scraper.js"
+        "content/scraper.js",
+        "content/source-notifier.js"
       ],
       "run_at": "document_idle"
     },
@@ -44,6 +57,7 @@
         "https://chatgpt.com/*"
       ],
       "js": [
+        "content/prompt-builder.js",
         "content/gpt-controller.js"
       ],
       "run_at": "document_idle"

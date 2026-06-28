@@ -9,6 +9,10 @@ const PRODUCT_KEY_PREFIX = "rpa_product_";
 const DEFAULT_PRODUCTS_SEEDED_KEY = "rpa_default_products_seeded_v1";
 const ACTIVITY_KEY = "rpa_activity";
 const NEWS_CACHE_KEY = "rpa_news_cache";
+const RELEASE_CACHE_KEY = "rpa_release_cache";
+const DIRECTORY_WATCH_KEY = "rpa_directory_watch";
+const SOURCE_STATE_KEY = "rpa_source_state";
+const NOTIFICATION_TARGETS_KEY = "rpa_notification_targets";
 const GPT_TAB_ID_KEY = "rpa_gpt_tab_id";
 
 const MAX_QUEUE_SIZE = 20;
@@ -16,7 +20,10 @@ const MAX_TASKS = 80;
 const MAX_PRODUCTS = 150;
 const MAX_PRODUCT_LINKS = 30;
 const MAX_ACTIVITY_ITEMS = 30;
+const MAX_NOTIFICATION_TARGETS = 40;
 const ACTIVE_JOB_TIMEOUT_MS = 6 * 60 * 1000;
+const RELEASE_CADENCE_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const GPT_URL = "https://chatgpt.com/";
 
 const DEFAULT_SETTINGS = {
@@ -52,7 +59,7 @@ const DEFAULT_PRODUCTS = [
       ]
     },
     notes:
-      "Primary WooCommerce filter plugin. Use the GitHub repository, Plugincy landing page, product website, and documentation links when helpful."
+      "Primary WooCommerce filter plugin. Inspect the repository for implementation details and use the documentation and product pages to verify supported behavior before drafting a reply."
   },
   {
     id: "default_one_page_quick_checkout",
@@ -79,7 +86,7 @@ const DEFAULT_PRODUCTS = [
       ]
     },
     notes:
-      "WooCommerce one-page checkout plugin. Include docs, Plugincy landing page, and product website quick links when relevant."
+      "WooCommerce one-page checkout plugin. Use the repository, documentation, and product pages as internal reference material for accurate replies."
   },
   {
     id: "default_multi_location_inventory",
@@ -109,9 +116,15 @@ const DEFAULT_PRODUCTS = [
       ]
     },
     notes:
-      "WooCommerce multi-location inventory plugin. Use the repo, docs, Plugincy page, and product website as quick-link context."
+      "WooCommerce multi-location inventory plugin. Inspect the repository and documentation when diagnosing behavior; product pages provide additional internal context."
   }
 ];
+
+const LEGACY_DEFAULT_PRODUCT_NOTES = new Set([
+  "Primary WooCommerce filter plugin. Use the GitHub repository, Plugincy landing page, product website, and documentation links when helpful.",
+  "WooCommerce one-page checkout plugin. Include docs, Plugincy landing page, and product website quick links when relevant.",
+  "WooCommerce multi-location inventory plugin. Use the repo, docs, Plugincy page, and product website as quick-link context."
+]);
 
 const SUPPORT_TAB_PATTERNS = [
   "https://hostinger.titan.email/*",
@@ -128,6 +141,24 @@ const FEEDS = [
     id: "woocommerce",
     name: "WooCommerce Developer Blog",
     url: "https://developer.woocommerce.com/feed/"
+  }
+];
+
+const MONITORED_PLUGINS = [
+  {
+    slug: "one-page-quick-checkout-for-woocommerce",
+    name: "One Page Quick Checkout for WooCommerce",
+    url: "https://wordpress.org/plugins/one-page-quick-checkout-for-woocommerce/"
+  },
+  {
+    slug: "dynamic-ajax-product-filters-for-woocommerce",
+    name: "Dynamic AJAX Product Filters for WooCommerce",
+    url: "https://wordpress.org/plugins/dynamic-ajax-product-filters-for-woocommerce/"
+  },
+  {
+    slug: "multi-location-product-and-inventory-management",
+    name: "Multi Location Product & Inventory Management for WooCommerce",
+    url: "https://wordpress.org/plugins/multi-location-product-and-inventory-management/"
   }
 ];
 
@@ -155,6 +186,22 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "rpa-queue-watchdog") {
     void recoverQueue();
   }
+
+  if (alarm.name === "rpa-release-refresh") {
+    void refreshReleaseCache();
+  }
+
+  if (alarm.name === "rpa-directory-watch") {
+    void refreshDirectoryWatch();
+  }
+});
+
+chrome.notifications.onClicked.addListener((notificationId) => {
+  void openNotificationTarget(notificationId);
+});
+
+chrome.notifications.onButtonClicked.addListener((notificationId) => {
+  void openNotificationTarget(notificationId);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -202,13 +249,29 @@ async function initializeExtension() {
 
   await Promise.all([
     chrome.alarms.create("rpa-news-refresh", { periodInMinutes: 60 }),
-    chrome.alarms.create("rpa-queue-watchdog", { periodInMinutes: 1 })
+    chrome.alarms.create("rpa-queue-watchdog", { periodInMinutes: 1 }),
+    chrome.alarms.create("rpa-release-refresh", { periodInMinutes: 360 }),
+    chrome.alarms.create("rpa-directory-watch", { periodInMinutes: 15 })
   ]);
 
-  const cacheResult = await chrome.storage.local.get(NEWS_CACHE_KEY);
+  const cacheResult = await chrome.storage.local.get([
+    NEWS_CACHE_KEY,
+    RELEASE_CACHE_KEY,
+    DIRECTORY_WATCH_KEY
+  ]);
   const fetchedAt = Number(cacheResult[NEWS_CACHE_KEY]?.fetchedAt || 0);
   if (Date.now() - fetchedAt > 60 * 60 * 1000) {
     void refreshNewsCache();
+  }
+
+  const releasesFetchedAt = Number(cacheResult[RELEASE_CACHE_KEY]?.fetchedAt || 0);
+  if (Date.now() - releasesFetchedAt > 6 * 60 * 60 * 1000) {
+    void refreshReleaseCache();
+  }
+
+  const directoryCheckedAt = Number(cacheResult[DIRECTORY_WATCH_KEY]?.checkedAt || 0);
+  if (Date.now() - directoryCheckedAt > 15 * 60 * 1000) {
+    void refreshDirectoryWatch();
   }
 
   void recoverQueue();
@@ -244,6 +307,14 @@ async function routeMessage(message, sender) {
     case "RPA_REFRESH_NEWS":
       await refreshNewsCache();
       return { refreshed: true };
+
+    case "RPA_REFRESH_RELEASES":
+      await Promise.all([refreshReleaseCache(), refreshDirectoryWatch()]);
+      return { refreshed: true };
+
+    case "RPA_REPORT_SOURCE_STATE":
+      assertSupportSender(sender);
+      return handleSourceStateReport(message, sender.tab);
 
     case "RPA_ENSURE_DEFAULT_PRODUCTS":
       await ensureDefaultProducts();
@@ -485,7 +556,10 @@ function mergeDefaultProduct(existing, defaults) {
         defaults.resources.customLinks
       )
     },
-    notes: existing.notes || defaults.notes,
+    notes:
+      !existing.notes || LEGACY_DEFAULT_PRODUCT_NOTES.has(existing.notes)
+        ? defaults.notes
+        : existing.notes,
     updatedAt: Date.now()
   };
 }
@@ -767,7 +841,11 @@ async function dispatchNextJob() {
 
     try {
       const gptTab = await findOrCreateChatGptTab();
-      await ensureContentScript(gptTab.id, "content/gpt-controller.js", "RPA_GPT_PING");
+      await ensureContentScript(
+        gptTab.id,
+        ["content/prompt-builder.js", "content/gpt-controller.js"],
+        "RPA_GPT_PING"
+      );
 
       const acknowledgement = await chrome.tabs.sendMessage(gptTab.id, {
         type: "RPA_GPT_RUN",
@@ -866,7 +944,7 @@ async function ensureContentScript(tabId, file, pingType) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: [file]
+    files: Array.isArray(file) ? file : [file]
   });
 
   await delay(250);
@@ -1068,7 +1146,11 @@ async function processCurrentSupportTab() {
     throw new Error("Open a Fluent Support ticket or Titan email first.");
   }
 
-  await ensureContentScript(target.id, "content/scraper.js", "RPA_SUPPORT_PING");
+  await ensureContentScript(
+    target.id,
+    ["content/scraper.js", "content/source-notifier.js"],
+    "RPA_SUPPORT_PING"
+  );
   const result = await chrome.tabs.sendMessage(target.id, {
     type: "RPA_CAPTURE_TICKET"
   });
@@ -1123,8 +1205,8 @@ async function getSessionHealth() {
         await ensureContentScript(
           tab.id,
           definition.id === "chatgpt"
-            ? "content/gpt-controller.js"
-            : "content/scraper.js",
+            ? ["content/prompt-builder.js", "content/gpt-controller.js"]
+            : ["content/scraper.js", "content/source-notifier.js"],
           definition.ping
         );
         const response = await chrome.tabs.sendMessage(tab.id, {
@@ -1277,6 +1359,479 @@ async function refreshNewsCache() {
       sources
     }
   });
+}
+
+async function refreshReleaseCache() {
+  const stored = await chrome.storage.local.get(RELEASE_CACHE_KEY);
+  const previousPlugins = Array.isArray(stored[RELEASE_CACHE_KEY]?.plugins)
+    ? stored[RELEASE_CACHE_KEY].plugins
+    : [];
+  const plugins = await Promise.all(
+    MONITORED_PLUGINS.map(async (plugin) => {
+      try {
+        const endpoint = new URL("https://api.wordpress.org/plugins/info/1.2/");
+        endpoint.searchParams.set("action", "plugin_information");
+        endpoint.searchParams.set("request[slug]", plugin.slug);
+
+        const response = await fetch(endpoint.href, {
+          method: "GET",
+          credentials: "omit",
+          cache: "no-cache",
+          headers: {
+            Accept: "application/json"
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data || typeof data !== "object" || data.error) {
+          throw new Error("WordPress.org returned an invalid plugin record.");
+        }
+
+        const lastUpdatedAt = parseWordPressOrgDate(data.last_updated);
+        if (!lastUpdatedAt) {
+          throw new Error("The last update date was unavailable.");
+        }
+
+        const activeInstalls = Math.max(0, Number(data.active_installs || 0));
+        const rating = Math.max(0, Math.min(100, Number(data.rating || 0)));
+        const numRatings = Math.max(0, Number(data.num_ratings || 0));
+        const supportThreads = Math.max(0, Number(data.support_threads || 0));
+        const supportThreadsResolved = Math.max(
+          0,
+          Number(data.support_threads_resolved || 0)
+        );
+        const previousPlugin = previousPlugins.find(
+          (candidate) => candidate.slug === plugin.slug
+        );
+        const newRatings =
+          typeof previousPlugin?.numRatings === "number"
+            ? Math.max(0, numRatings - previousPlugin.numRatings)
+            : 0;
+        const newSupportThreads =
+          typeof previousPlugin?.supportThreads === "number"
+            ? Math.max(0, supportThreads - previousPlugin.supportThreads)
+            : 0;
+        const previousRecentMetrics = previousPlugin?.recentMetrics;
+        const recentMetrics =
+          newRatings || newSupportThreads
+            ? {
+                newRatings,
+                newSupportThreads,
+                detectedAt: Date.now()
+              }
+            : previousRecentMetrics &&
+                Date.now() - Number(previousRecentMetrics.detectedAt || 0) < 7 * DAY_MS
+              ? previousRecentMetrics
+              : null;
+        const deadlineAt = lastUpdatedAt + RELEASE_CADENCE_DAYS * DAY_MS;
+        return {
+          ...plugin,
+          ok: true,
+          name: decodeXmlEntities(cleanText(data.name || plugin.name, 180)),
+          version: cleanText(data.version || "", 40),
+          activeInstalls,
+          rating,
+          numRatings,
+          supportThreads,
+          supportThreadsResolved,
+          recentMetrics,
+          lastUpdatedAt,
+          deadlineAt,
+          daysRemaining: Math.ceil((deadlineAt - Date.now()) / DAY_MS)
+        };
+      } catch (error) {
+        return {
+          ...plugin,
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "The WordPress.org release check failed."
+        };
+      }
+    })
+  );
+
+  await chrome.storage.local.set({
+    [RELEASE_CACHE_KEY]: {
+      fetchedAt: Date.now(),
+      cadenceDays: RELEASE_CADENCE_DAYS,
+      plugins
+    }
+  });
+}
+
+function parseWordPressOrgDate(value) {
+  const match = String(value || "")
+    .trim()
+    .match(
+      /^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(am|pm)\s+GMT$/i
+    );
+  if (!match) {
+    return 0;
+  }
+
+  let hour = Number(match[4]);
+  const meridiem = match[6].toLowerCase();
+  if (hour === 12) {
+    hour = 0;
+  }
+  if (meridiem === "pm") {
+    hour += 12;
+  }
+
+  return Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    hour,
+    Number(match[5])
+  );
+}
+
+async function refreshDirectoryWatch() {
+  const stored = await chrome.storage.local.get(DIRECTORY_WATCH_KEY);
+  const previous =
+    stored[DIRECTORY_WATCH_KEY] && typeof stored[DIRECTORY_WATCH_KEY] === "object"
+      ? stored[DIRECTORY_WATCH_KEY]
+      : {};
+  const previousFeeds =
+    previous.feeds && typeof previous.feeds === "object" ? previous.feeds : {};
+
+  const results = await Promise.all(
+    MONITORED_PLUGINS.flatMap((plugin) =>
+      [
+        {
+          kind: "support",
+          label: "support topic",
+          pluralLabel: "support topics",
+          url: `https://wordpress.org/support/plugin/${plugin.slug}/feed/`
+        },
+        {
+          kind: "review",
+          label: "rating/review",
+          pluralLabel: "ratings/reviews",
+          url: `https://wordpress.org/support/plugin/${plugin.slug}/reviews/feed/`
+        }
+      ].map(async (feed) => {
+        const key = `${plugin.slug}:${feed.kind}`;
+        try {
+          const response = await fetch(feed.url, {
+            method: "GET",
+            credentials: "omit",
+            cache: "no-cache",
+            headers: {
+              Accept: "application/rss+xml, text/xml"
+            }
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const xml = (await response.text()).slice(0, 500000);
+          return {
+            ...feed,
+            key,
+            plugin,
+            ok: true,
+            items: extractRssItems(xml, 8)
+          };
+        } catch (error) {
+          return {
+            ...feed,
+            key,
+            plugin,
+            ok: false,
+            error: error instanceof Error ? error.message : "Feed request failed."
+          };
+        }
+      })
+    )
+  );
+
+  const nextFeeds = { ...previousFeeds };
+  const pendingNotifications = [];
+
+  for (const result of results) {
+    if (!result.ok) {
+      nextFeeds[result.key] = {
+        ...previousFeeds[result.key],
+        error: result.error,
+        checkedAt: Date.now()
+      };
+      continue;
+    }
+
+    const ids = result.items.map((item) => item.id).filter(Boolean);
+    const previousFeed = previousFeeds[result.key];
+    const previousIds = Array.isArray(previousFeed?.ids) ? previousFeed.ids : [];
+    const newItems = previousFeed
+      ? result.items.filter((item) => item.id && !previousIds.includes(item.id))
+      : [];
+
+    const previousRecent = previousFeed?.recent;
+    const recent =
+      newItems.length > 0
+        ? {
+            count: newItems.length,
+            title: newItems[0].title,
+            link: newItems[0].link,
+            detectedAt: Date.now()
+          }
+        : previousRecent &&
+            Date.now() - Number(previousRecent.detectedAt || 0) < 7 * DAY_MS
+          ? previousRecent
+          : null;
+
+    nextFeeds[result.key] = {
+      ids,
+      error: "",
+      checkedAt: Date.now(),
+      latest: result.items[0] || null,
+      recent
+    };
+
+    if (newItems.length) {
+      const latest = newItems[0];
+      pendingNotifications.push({
+        category: `directory-${result.kind}-${result.plugin.slug}`,
+        title:
+          newItems.length === 1
+            ? `New WordPress.org ${result.label}`
+            : `${newItems.length} new WordPress.org ${result.pluralLabel}`,
+        message: `${result.plugin.name}: ${latest.title}`,
+        targetUrl: latest.link || result.url
+      });
+    }
+  }
+
+  await chrome.storage.local.set({
+    [DIRECTORY_WATCH_KEY]: {
+      checkedAt: Date.now(),
+      feeds: nextFeeds
+    }
+  });
+
+  await Promise.all(
+    pendingNotifications.map((notification) =>
+      createWorkbenchNotification(notification)
+    )
+  );
+}
+
+function extractRssItems(xml, limit) {
+  const items = [];
+  const matches = String(xml || "").matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi);
+
+  for (const match of matches) {
+    const itemXml = match[1];
+    const link = normalizeHttpsUrl(extractXmlElement(itemXml, "link"), 1000);
+    const id = cleanText(extractXmlElement(itemXml, "guid") || link, 1000);
+    const title = cleanText(
+      stripXmlMarkup(extractXmlElement(itemXml, "title")) || "New forum activity",
+      220
+    );
+
+    if (!id || !link) {
+      continue;
+    }
+
+    items.push({ id, link, title });
+    if (items.length >= limit) {
+      break;
+    }
+  }
+
+  return items;
+}
+
+function extractXmlElement(xml, tagName) {
+  const pattern = new RegExp(
+    `<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`,
+    "i"
+  );
+  const match = String(xml || "").match(pattern);
+  return String(match?.[1] || "")
+    .replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/i, "$1")
+    .trim();
+}
+
+function stripXmlMarkup(value) {
+  return decodeXmlEntities(
+    String(value || "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
+function decodeXmlEntities(value) {
+  const entities = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    quot: "\"",
+    "#39": "'"
+  };
+
+  return String(value || "").replace(
+    /&(#x[0-9a-f]+|#\d+|amp|apos|gt|lt|quot|#39);/gi,
+    (match, entity) => {
+      const normalized = entity.toLowerCase();
+      if (normalized.startsWith("#x")) {
+        return String.fromCodePoint(Number.parseInt(normalized.slice(2), 16));
+      }
+      if (normalized.startsWith("#")) {
+        return String.fromCodePoint(Number.parseInt(normalized.slice(1), 10));
+      }
+      return entities[normalized] || match;
+    }
+  );
+}
+
+async function handleSourceStateReport(message, tab) {
+  const source = ["fluent-support", "titan-mail"].includes(message.source)
+    ? message.source
+    : "";
+  if (!source) {
+    throw new Error("Unknown support notification source.");
+  }
+
+  const fingerprints = uniqueStrings(
+    Array.isArray(message.fingerprints)
+      ? message.fingerprints.map((value) => cleanText(value, 120))
+      : []
+  ).slice(0, 50);
+  const stored = await chrome.storage.local.get(SOURCE_STATE_KEY);
+  const state =
+    stored[SOURCE_STATE_KEY] && typeof stored[SOURCE_STATE_KEY] === "object"
+      ? stored[SOURCE_STATE_KEY]
+      : {};
+  const previous = state[source];
+  const previousFingerprints = Array.isArray(previous?.fingerprints)
+    ? previous.fingerprints
+    : [];
+  const newFingerprints = previous
+    ? fingerprints.filter((fingerprint) => !previousFingerprints.includes(fingerprint))
+    : [];
+
+  state[source] = {
+    fingerprints:
+      fingerprints.length || !previous ? fingerprints : previousFingerprints,
+    observedAt: Date.now()
+  };
+  await chrome.storage.local.set({ [SOURCE_STATE_KEY]: state });
+
+  if (newFingerprints.length) {
+    const isMail = source === "titan-mail";
+    await createWorkbenchNotification({
+      category: source,
+      title: isMail ? "New Titan mail" : "New Fluent Support ticket",
+      message:
+        newFingerprints.length === 1
+          ? isMail
+            ? "A new unread email was detected."
+            : "A new unread support ticket was detected."
+          : `${newFingerprints.length} new unread ${
+              isMail ? "emails were" : "support tickets were"
+            } detected.`,
+      targetUrl:
+        normalizeSupportUrl(message.pageUrl || tab?.url || "") ||
+        (isMail
+          ? "https://hostinger.titan.email/mail/"
+          : "https://plugincy.com/wp-admin/admin.php?page=fluent-support#/tickets")
+    });
+  }
+
+  return {
+    baseline: !previous,
+    newItems: newFingerprints.length
+  };
+}
+
+async function createWorkbenchNotification({
+  category,
+  title,
+  message,
+  targetUrl
+}) {
+  const normalizedTarget = normalizeHttpsUrl(targetUrl, 1200);
+  const notificationId = `rpa-${cleanText(category, 80).replace(/[^a-z0-9_-]+/gi, "-")}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const stored = await chrome.storage.local.get(NOTIFICATION_TARGETS_KEY);
+  const current =
+    stored[NOTIFICATION_TARGETS_KEY] &&
+    typeof stored[NOTIFICATION_TARGETS_KEY] === "object"
+      ? stored[NOTIFICATION_TARGETS_KEY]
+      : {};
+  const entries = Object.entries(current)
+    .filter(([, value]) => Date.now() - Number(value?.createdAt || 0) < 7 * DAY_MS)
+    .slice(-(MAX_NOTIFICATION_TARGETS - 1));
+  const targets = Object.fromEntries(entries);
+  targets[notificationId] = {
+    url: normalizedTarget,
+    createdAt: Date.now()
+  };
+
+  await chrome.storage.local.set({ [NOTIFICATION_TARGETS_KEY]: targets });
+  await chrome.notifications.create(notificationId, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("assets/icons/icon-128.png"),
+    title: cleanText(title, 120),
+    message: cleanText(message, 240),
+    priority: 1,
+    requireInteraction: true,
+    buttons: normalizedTarget ? [{ title: "Open" }] : []
+  });
+}
+
+async function openNotificationTarget(notificationId) {
+  const stored = await chrome.storage.local.get(NOTIFICATION_TARGETS_KEY);
+  const targets =
+    stored[NOTIFICATION_TARGETS_KEY] &&
+    typeof stored[NOTIFICATION_TARGETS_KEY] === "object"
+      ? stored[NOTIFICATION_TARGETS_KEY]
+      : {};
+  const targetUrl = normalizeHttpsUrl(targets[notificationId]?.url, 1200);
+
+  if (targetUrl) {
+    const target = new URL(targetUrl);
+    const tabs = await chrome.tabs.query({});
+    const existing = tabs.find((tab) => {
+      try {
+        const candidate = new URL(tab.url || "");
+        return (
+          candidate.origin === target.origin &&
+          candidate.pathname === target.pathname
+        );
+      } catch {
+        return false;
+      }
+    });
+
+    if (existing?.id) {
+      await chrome.tabs.update(existing.id, {
+        active: true,
+        url: targetUrl
+      });
+      if (Number.isInteger(existing.windowId)) {
+        await chrome.windows.update(existing.windowId, { focused: true });
+      }
+    } else {
+      await chrome.tabs.create({ url: targetUrl, active: true });
+    }
+  }
+
+  delete targets[notificationId];
+  await Promise.all([
+    chrome.storage.local.set({ [NOTIFICATION_TARGETS_KEY]: targets }),
+    chrome.notifications.clear(notificationId)
+  ]);
 }
 
 function delay(milliseconds) {
