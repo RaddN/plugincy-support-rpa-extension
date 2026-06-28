@@ -1,0 +1,16 @@
+{
+  "name": "plugincy-support-rpa-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Manifest V3 support automation extension and persistent-profile Playwright smoke test.",
+  "scripts": {
+    "validate": "node scripts/validate.mjs",
+    "test:extension": "node test-extension.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

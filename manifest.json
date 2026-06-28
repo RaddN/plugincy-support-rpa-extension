@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Plugincy Support RPA",
+  "version": "1.0.0",
+  "description": "Draft customer-support replies through ChatGPT, escalate sensitive tickets, and manage a WordPress developer workbench.",
+  "minimum_chrome_version": "111",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://hostinger.titan.email/*",
+    "https://plugincy.com/*",
+    "https://wordpress.org/*",
+    "https://developer.woocommerce.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open Plugincy Workbench"
+  },
+  "chrome_url_overrides": {
+    "newtab": "dashboard/newtab.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://hostinger.titan.email/*",
+        "https://plugincy.com/wp-admin/*"
+      ],
+      "js": [
+        "content/scraper.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "content/gpt-controller.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

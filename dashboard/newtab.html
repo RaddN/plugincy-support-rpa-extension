@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Plugincy Workbench</title>
+    <link rel="stylesheet" href="newtab.css">
+  </head>
+  <body data-rpa-dashboard="loading">
+    <a class="skip-link" href="#main-content">Skip to today’s work</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Workbench navigation">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M14.7 3.3a5.7 5.7 0 0 0-7.1 7.8l-4.3 4.3a2.1 2.1 0 1 0 3 3l4.3-4.3a5.7 5.7 0 0 0 7.8-7.1l-3.2 3.2-2.7-.7-.7-2.7 2.9-3.5Z"/>
+            </svg>
+          </span>
+          <span>Plugincy<br>Workbench</span>
+        </div>
+
+        <nav class="primary-nav" aria-label="Primary">
+          <a class="nav-link is-active" href="newtab.html" aria-current="page">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m3 11 9-8 9 8"/>
+              <path d="M5 10v10h14V10M9 20v-6h6v6"/>
+            </svg>
+            <span>Dashboard</span>
+          </a>
+          <a class="nav-link" href="https://plugincy.com/wp-admin/admin.php?page=fluent-support#/tickets" target="_blank" rel="noreferrer">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 15a4 4 0 0 1-4 4H9l-5 3v-3a4 4 0 0 1-2-3.5V7a4 4 0 0 1 4-4h11a4 4 0 0 1 4 4v8Z"/>
+              <path d="M7 8h10M7 12h7"/>
+            </svg>
+            <span>Fluent Support</span>
+          </a>
+          <a class="nav-link" href="https://hostinger.titan.email/mail/" target="_blank" rel="noreferrer">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="2"/>
+              <path d="m4 7 8 6 8-6"/>
+            </svg>
+            <span>Titan Mail</span>
+          </a>
+          <a class="nav-link" href="https://chatgpt.com/" target="_blank" rel="noreferrer">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a4.2 4.2 0 0 1 7.6 2.5 4.2 4.2 0 0 1 1 7.8 4.2 4.2 0 0 1-6.6 4.8 4.2 4.2 0 0 1-7.6-2.5 4.2 4.2 0 0 1-1-7.8A4.2 4.2 0 0 1 12 3Z"/>
+              <path d="m8.5 8.5 7 4v6M15.5 8.5l-7 4v6M8.5 12.5l7-4"/>
+            </svg>
+            <span>ChatGPT</span>
+          </a>
+          <a class="nav-link" href="https://plugincy.com/wp-admin/" target="_blank" rel="noreferrer">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"/>
+              <path d="M5.3 8h13.4M8 4l3.2 15M16 4l-3.2 15M4 12h16"/>
+            </svg>
+            <span>WordPress Admin</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <button class="nav-link nav-button" id="focus-settings" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>
+            </svg>
+            <span>Preferences</span>
+          </button>
+          <button class="nav-link nav-button" id="theme-toggle" type="button" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20.5 15.5A8 8 0 0 1 8.5 3.6 8.5 8.5 0 1 0 20.5 15.5Z"/>
+            </svg>
+            <span>Dark mode</span>
+            <span class="mini-toggle" aria-hidden="true"><span></span></span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="page">
+        <header class="topbar">
+          <div class="date-block">
+            <strong id="current-date">Today</strong>
+            <span id="current-day"></span>
+          </div>
+
+          <div class="topbar-actions">
+            <label class="autosend-control" id="settings-panel">
+              <span>
+                <strong>Auto-send replies</strong>
+                <small id="autosend-helper">Drafts require review</small>
+              </span>
+              <input id="autosend-toggle" type="checkbox">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+            <button class="primary-button" id="process-ticket" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m8 5 10 7-10 7V5Z"/>
+              </svg>
+              <span>Process current ticket</span>
+            </button>
+          </div>
+        </header>
+
+        <main id="main-content" class="content-grid">
+          <div class="workspace-column">
+            <section class="intro" aria-labelledby="page-title">
+              <h1 id="page-title">Good morning. Keep support moving.</h1>
+              <p class="review-state">
+                <span class="state-dot"></span>
+                <span id="review-state-copy">Review before send</span>
+              </p>
+            </section>
+
+            <section class="task-section" aria-labelledby="tasks-title">
+              <div class="section-heading">
+                <h2 id="tasks-title">Today’s work</h2>
+                <span id="task-summary">0 open tasks</span>
+              </div>
+
+              <form class="task-form" id="task-form">
+                <label class="sr-only" for="task-title">Task title</label>
+                <input id="task-title" name="title" type="text" maxlength="160" placeholder="Add a task…" autocomplete="off" required>
+                <label class="sr-only" for="task-priority">Priority</label>
+                <select id="task-priority" name="priority">
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="low">Low</option>
+                </select>
+                <button class="secondary-primary-button" type="submit">Add</button>
+              </form>
+
+              <div class="task-toolbar">
+                <div class="filter-tabs" role="group" aria-label="Filter tasks">
+                  <button class="filter-button is-active" type="button" data-filter="all" aria-pressed="true">All</button>
+                  <button class="filter-button" type="button" data-filter="open" aria-pressed="false">Open</button>
+                  <button class="filter-button" type="button" data-filter="done" aria-pressed="false">Done</button>
+                </div>
+                <span class="sync-state" id="sync-state">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 7h-5V2"/>
+                    <path d="M20 7a8 8 0 0 0-14-2M4 17h5v5"/>
+                    <path d="M4 17a8 8 0 0 0 14 2"/>
+                  </svg>
+                  Synced
+                </span>
+              </div>
+
+              <div class="task-ledger" aria-live="polite">
+                <div class="task-ledger-head" aria-hidden="true">
+                  <span></span>
+                  <span>Task</span>
+                  <span>Priority</span>
+                  <span>Source</span>
+                  <span>Added</span>
+                  <span></span>
+                </div>
+                <div id="task-list"></div>
+              </div>
+            </section>
+
+            <section class="activity-section" aria-labelledby="activity-title">
+              <div class="section-heading">
+                <h2 id="activity-title">Automation activity</h2>
+                <button class="text-button" id="refresh-activity" type="button">Refresh</button>
+              </div>
+              <div class="activity-list" id="activity-list"></div>
+            </section>
+          </div>
+
+          <aside class="insight-column" aria-label="Developer updates and session status">
+            <section class="news-section" aria-labelledby="news-title">
+              <div class="section-heading">
+                <h2 id="news-title">Developer updates</h2>
+                <button class="icon-button" id="refresh-news" type="button" aria-label="Refresh developer updates">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 7h-5V2"/>
+                    <path d="M20 7a8 8 0 1 0 1 8"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="news-list" id="news-list" aria-live="polite"></div>
+            </section>
+
+            <section class="health-section" aria-labelledby="health-title">
+              <div class="section-heading">
+                <h2 id="health-title">Session health</h2>
+                <button class="icon-button" id="refresh-health" type="button" aria-label="Refresh session health">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 7h-5V2"/>
+                    <path d="M20 7a8 8 0 1 0 1 8"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="health-list" id="health-list" aria-live="polite"></div>
+              <p class="health-note">Open services are checked locally. No login data is read or stored.</p>
+            </section>
+          </aside>
+        </main>
+      </div>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script src="newtab.js"></script>
+  </body>
+</html>
