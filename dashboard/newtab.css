@@ -83,21 +83,24 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
 button,
 a,
 input,
-select {
+select,
+textarea {
   -webkit-tap-highlight-color: transparent;
 }
 
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 25%, transparent);
   outline-offset: 2px;
 }
@@ -453,11 +456,25 @@ svg {
 
 .review-state {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
   margin: 14px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.weather-summary {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .state-dot {
@@ -509,6 +526,22 @@ svg {
   border-radius: 13px;
   background: var(--surface);
   cursor: pointer;
+}
+
+.preference-card-static {
+  cursor: default;
+}
+
+.preference-state {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 10px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .preference-card strong,
@@ -741,9 +774,9 @@ svg {
 }
 
 .task-form input,
-.task-form select {
+.task-form select,
+.task-form textarea {
   min-width: 0;
-  min-height: 42px;
   border: 1px solid var(--border-strong);
   border-radius: 9px;
   background: var(--surface);
@@ -752,19 +785,35 @@ svg {
 }
 
 .task-form input {
+  grid-column: 1 / -1;
+  min-height: 42px;
   padding: 0 14px;
 }
 
-.task-form input::placeholder {
+.task-form textarea {
+  grid-column: 1 / -1;
+  min-height: 92px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.task-form input::placeholder,
+.task-form textarea::placeholder {
   color: var(--faint);
 }
 
 .task-form select {
+  min-height: 42px;
   padding: 0 32px 0 12px;
 }
 
+.task-form button {
+  grid-column: 2 / 4;
+}
+
 .task-form input:hover,
-.task-form select:hover {
+.task-form select:hover,
+.task-form textarea:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
@@ -908,12 +957,11 @@ svg {
 }
 
 .task-note {
-  overflow: hidden;
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .priority-select {
@@ -1173,8 +1221,13 @@ svg {
 }
 
 .release-section,
-.health-section {
+.health-section,
+.insight-column > section + section {
   border-top: 1px solid var(--border);
+}
+
+.insight-column > section:first-child {
+  border-top: 0;
 }
 
 .news-list,
@@ -1777,7 +1830,9 @@ svg {
     grid-template-columns: 1fr 1fr;
   }
 
-  .task-form input {
+  .task-form input,
+  .task-form textarea,
+  .task-form button {
     grid-column: 1 / -1;
   }
 

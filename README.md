@@ -1,6 +1,6 @@
 # Plugincy Support RPA
 
-A Manifest V3 Chrome extension for a WordPress/WooCommerce developer support workflow. It reads the open Fluent Support ticket or Titan email, uses a logged-in `chatgpt.com` tab to draft a response, inserts the result back into the support editor, and escalates sensitive or runtime-only work into a synced task list.
+A Manifest V3 Chrome extension for a WordPress/WooCommerce developer support workflow. It reads the open Fluent Support ticket or Titan email only after you click the support-page button, uses a logged-in `chatgpt.com` tab to draft a response, shows the result in a copy-ready support sidebar, and escalates sensitive or runtime-only work into a synced task list.
 
 No API key is used. The extension operates through page DOM content scripts in your own logged-in browser session.
 
@@ -14,6 +14,7 @@ No API key is used. The extension operates through page DOM content scripts in y
   - Desktop notifications for newly detected Fluent Support tickets, Titan unread mail, and new WordPress.org plugin ratings/reviews or support topics.
   - Recent automation activity.
   - Open-tab/session health indicators.
+  - Police Line, Cumilla weather and umbrella dates when rain probability is above 40%.
   - Navigation links to Fluent Support, Titan Mail, ChatGPT, and WordPress Admin.
   - Light and dark themes.
 - Support-page scraper for:
@@ -23,7 +24,8 @@ No API key is used. The extension operates through page DOM content scripts in y
 - Product repositories, documentation, landing pages, and other configured URLs are analysis references. The prompt uses them to verify code and product behavior; it does not automatically expose them as customer-facing quick links.
 - Local credential detection. Tickets containing likely usernames/passwords or WordPress admin access details are not sent to ChatGPT.
 - AI escalation handling. `ESCALATE_TO_HUMAN: ...` results become high-priority synced tasks instead of replies.
-- Draft-only insertion by default. Automatic submission is an explicit dashboard opt-in.
+- Manual copy-only drafts. No reply is pasted or sent automatically.
+- Extension-toolbar To-Do overlay that works from normal web tabs.
 - Persistent-profile Playwright smoke test.
 
 ## Install the unpacked extension
@@ -43,9 +45,9 @@ The extension creates and reuses its own pinned ChatGPT tab during ticket proces
 ## Daily workflow
 
 1. Open a Fluent Support ticket or Titan email.
-2. Select **Draft with ChatGPT** in the small support-page launcher, or open a new tab and select **Process current ticket**.
+2. Select **Generate GPT reply** in the support-page launcher/sidebar, or open a new tab and select **Process current ticket**.
 3. Leave the pinned ChatGPT tab available while the response is generated.
-4. Review the inserted draft and send it.
+4. Copy the sidebar draft, paste it into the support reply editor, review, and send manually.
 
 If temporary WordPress credentials are detected, the ticket is escalated locally and no ticket text is sent to ChatGPT. `ESCALATE_TO_HUMAN: ...` is reserved for tickets where a safe customer-facing draft cannot be produced because sensitive access details are already present, immediate internal/manual action is required, or another genuine safety boundary applies.
 
@@ -58,11 +60,11 @@ Brief or incomplete reports are not escalated by default. The generated reply as
 - Release metadata is read from the official WordPress.org Plugins API every six hours and on manual refresh. Each monitored plugin is due 30 days after its reported `last_updated` value.
 - Selecting a desktop notification focuses an existing matching tab or opens the target in a new tab.
 
-## Auto-send safety
+## Manual-copy safety
 
-**Auto-send replies** is off by default. When it is off, the extension only inserts a draft. Turning it on allows the content script to click a matching Send/Reply button after inserting a response.
+Automatic ticket drafting on visit is disabled. Opening a Titan email or Fluent Support ticket no longer sends anything to ChatGPT.
 
-Keep auto-send off until the selectors have been checked against the current Fluent Support and Titan interfaces. Those products can change their DOM without notice.
+Replies are copy-only. The support content script does not paste into the reply editor and does not click Send.
 
 ## Install test dependencies
 

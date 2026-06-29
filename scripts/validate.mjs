@@ -8,6 +8,7 @@ const requiredFiles = [
   "manifest.json",
   "background.js",
   "content/scraper.js",
+  "content/todo-overlay.js",
   "content/source-notifier.js",
   "content/prompt-builder.js",
   "content/gpt-controller.js",
@@ -41,7 +42,9 @@ const expectedHosts = [
   "https://hostinger.titan.email/*",
   "https://plugincy.com/*",
   "https://wordpress.org/*",
-  "https://api.wordpress.org/*"
+  "https://api.wordpress.org/*",
+  "https://api.open-meteo.com/*",
+  "https://geocoding-api.open-meteo.com/*"
 ];
 
 if (manifest.manifest_version !== 3) {
@@ -77,6 +80,7 @@ if (manifest.chrome_url_overrides?.newtab !== "dashboard/newtab.html") {
 for (const file of [
   "background.js",
   "content/scraper.js",
+  "content/todo-overlay.js",
   "content/source-notifier.js",
   "content/prompt-builder.js",
   "content/gpt-controller.js",

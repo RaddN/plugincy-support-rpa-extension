@@ -9,7 +9,9 @@
   const ACTIVITY_KEY = "rpa_activity";
   const NEWS_CACHE_KEY = "rpa_news_cache";
   const RELEASE_CACHE_KEY = "rpa_release_cache";
+  const WEATHER_CACHE_KEY = "rpa_weather_cache";
   const DIRECTORY_WATCH_KEY = "rpa_directory_watch";
+  const DEFAULT_WEATHER_LOCATION = "Police Line, Cumilla";
   const MAX_TASKS = 80;
   const MAX_PRODUCTS = 150;
   const MAX_PRODUCT_LINKS = 30;
@@ -23,7 +25,7 @@
     preferencesOpen: false,
     settings: {
       autoSendReplies: false,
-      autoProcessTickets: true,
+      autoProcessTickets: false,
       theme: "light"
     }
   };
@@ -34,8 +36,10 @@
     currentDay: document.getElementById("current-day"),
     pageTitle: document.getElementById("page-title"),
     reviewStateCopy: document.getElementById("review-state-copy"),
+    weatherSummary: document.getElementById("weather-summary"),
     taskForm: document.getElementById("task-form"),
     taskTitle: document.getElementById("task-title"),
+    taskDetails: document.getElementById("task-details"),
     taskPriority: document.getElementById("task-priority"),
     taskList: document.getElementById("task-list"),
     taskSummary: document.getElementById("task-summary"),
@@ -44,7 +48,6 @@
     autosendToggle: document.getElementById("autosend-toggle"),
     preferencesSection: document.getElementById("preferences-section"),
     closePreferences: document.getElementById("close-preferences"),
-    autoprocessToggle: document.getElementById("autoprocess-toggle"),
     preferencesAutosendToggle: document.getElementById("preferences-autosend-toggle"),
     autosendHelper: document.getElementById("autosend-helper"),
     themeToggle: document.getElementById("theme-toggle"),
@@ -88,7 +91,8 @@
       loadActivity(),
       loadNews(),
       loadReleases(),
-      loadSessionHealth()
+      loadSessionHealth(),
+      loadWeather()
     ]);
 
     document.body.dataset.rpaDashboard = "ready";
@@ -126,24 +130,6 @@
       void processCurrentTicket();
     });
 
-    elements.autosendToggle.addEventListener("change", () => {
-      state.settings.autoSendReplies = elements.autosendToggle.checked;
-      applySettingsToUi();
-      void saveSettings();
-    });
-
-    elements.preferencesAutosendToggle.addEventListener("change", () => {
-      state.settings.autoSendReplies = elements.preferencesAutosendToggle.checked;
-      applySettingsToUi();
-      void saveSettings();
-    });
-
-    elements.autoprocessToggle.addEventListener("change", () => {
-      state.settings.autoProcessTickets = elements.autoprocessToggle.checked;
-      applySettingsToUi();
-      void saveSettings();
-    });
-
     elements.themeToggle.addEventListener("click", () => {
       state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
       applySettingsToUi();
@@ -156,7 +142,7 @@
         behavior: "smooth",
         block: "start"
       });
-      elements.autoprocessToggle.focus();
+      elements.productName.focus();
     });
 
     elements.closePreferences.addEventListener("click", () => {
@@ -223,6 +209,10 @@
         renderReleaseCache(changes[RELEASE_CACHE_KEY].newValue);
       }
 
+      if (areaName === "local" && changes[WEATHER_CACHE_KEY]) {
+        renderWeather(changes[WEATHER_CACHE_KEY].newValue);
+      }
+
       if (areaName === "local" && changes[DIRECTORY_WATCH_KEY]) {
         state.directoryWatch = changes[DIRECTORY_WATCH_KEY].newValue || {};
         renderReleaseCache(state.releaseCache);
@@ -251,11 +241,8 @@
     const stored = result[SETTINGS_KEY];
     if (stored && typeof stored === "object") {
       state.settings = {
-        autoSendReplies: Boolean(stored.autoSendReplies),
-        autoProcessTickets:
-          stored.autoProcessTickets === undefined
-            ? true
-            : Boolean(stored.autoProcessTickets),
+        autoSendReplies: false,
+        autoProcessTickets: false,
         theme: stored.theme === "dark" ? "dark" : "light"
       };
     }
@@ -267,8 +254,8 @@
     try {
       await chrome.storage.sync.set({
         [SETTINGS_KEY]: {
-          autoSendReplies: state.settings.autoSendReplies,
-          autoProcessTickets: state.settings.autoProcessTickets,
+          autoSendReplies: false,
+          autoProcessTickets: false,
           theme: state.settings.theme
         }
       });
@@ -286,18 +273,9 @@
     elements.themeToggle.setAttribute("aria-pressed", String(isDark));
     elements.autosendToggle.checked = state.settings.autoSendReplies;
     elements.preferencesAutosendToggle.checked = state.settings.autoSendReplies;
-    elements.autoprocessToggle.checked = state.settings.autoProcessTickets;
 
-    if (state.settings.autoSendReplies) {
-      elements.autosendHelper.textContent = "Replies send after drafting";
-      elements.reviewStateCopy.textContent = "Auto-send enabled";
-    } else if (state.settings.autoProcessTickets) {
-      elements.autosendHelper.textContent = "Auto-draft enabled";
-      elements.reviewStateCopy.textContent = "Auto-draft, review before send";
-    } else {
-      elements.autosendHelper.textContent = "Drafts require review";
-      elements.reviewStateCopy.textContent = "Review before send";
-    }
+    elements.autosendHelper.textContent = "Nothing is sent automatically";
+    elements.reviewStateCopy.textContent = "Manual draft, review before send";
   }
 
   function openPreferences() {
@@ -350,7 +328,7 @@
     const task = {
       id: crypto.randomUUID(),
       title,
-      notes: "",
+      notes: normalizeMultiline(elements.taskDetails.value),
       priority: normalizePriority(elements.taskPriority.value),
       status: "open",
       source: "manual",
@@ -1434,6 +1412,93 @@
     return row;
   }
 
+  async function loadWeather({ force = false } = {}) {
+    if (!elements.weatherSummary) {
+      return;
+    }
+
+    elements.weatherSummary.textContent = "Weather loading...";
+
+    try {
+      if (force) {
+        const response = await chrome.runtime.sendMessage({
+          type: "RPA_REFRESH_WEATHER"
+        });
+        if (!response?.ok) {
+          throw new Error(response?.error || "Weather refresh failed.");
+        }
+      }
+
+      let result = await chrome.storage.local.get(WEATHER_CACHE_KEY);
+      let cache = result[WEATHER_CACHE_KEY];
+      if (
+        !cache?.daily?.length ||
+        normalizeText(cache?.location?.name) !== DEFAULT_WEATHER_LOCATION
+      ) {
+        const response = await chrome.runtime.sendMessage({
+          type: "RPA_REFRESH_WEATHER"
+        });
+        if (!response?.ok) {
+          throw new Error(response?.error || "Weather refresh failed.");
+        }
+        result = await chrome.storage.local.get(WEATHER_CACHE_KEY);
+        cache = result[WEATHER_CACHE_KEY];
+      }
+
+      renderWeather(cache);
+    } catch (error) {
+      elements.weatherSummary.textContent = getErrorMessage(
+        error,
+        "Weather unavailable."
+      );
+    }
+  }
+
+  function renderWeather(cache) {
+    if (!elements.weatherSummary) {
+      return;
+    }
+
+    const location = normalizeText(cache?.location?.name) || "your area";
+    const temperature = Number(cache?.current?.temperature);
+    const temperatureText = Number.isFinite(temperature)
+      ? `${Math.round(temperature)}°C`
+      : "temp unavailable";
+    const umbrellaDays = Array.isArray(cache?.umbrellaDays)
+      ? cache.umbrellaDays
+      : Array.isArray(cache?.daily)
+        ? cache.daily.filter((day) => Number(day.rainProbability) > 40)
+        : [];
+
+    const rainText = umbrellaDays.length
+      ? `Umbrella: ${umbrellaDays
+          .slice(0, 3)
+          .map((day) => `${formatWeatherDate(day.date)} ${Math.round(Number(day.rainProbability))}%`)
+          .join(", ")}`
+      : "No >40% rain expected";
+
+    elements.weatherSummary.textContent = `${location} ${temperatureText} · ${rainText}`;
+    elements.weatherSummary.title = "Shows forecast dates where rain probability is above 40%.";
+  }
+
+  function formatWeatherDate(value) {
+    const date = new Date(`${value}T12:00:00`);
+    if (Number.isNaN(date.getTime())) {
+      return normalizeText(value);
+    }
+
+    const today = new Date();
+    const todayKey = today.toISOString().slice(0, 10);
+    if (value === todayKey) {
+      return "today";
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric"
+    }).format(date);
+  }
+
   function createLoadingRow(text) {
     const row = document.createElement("div");
     row.className = "loading-row";
@@ -1647,7 +1712,7 @@
       return "Drafting";
     }
     if (value === "draft") {
-      return "Draft inserted";
+      return "Draft ready";
     }
     return normalizeText(value) || "Ready";
   }

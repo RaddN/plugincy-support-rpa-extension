@@ -83,10 +83,10 @@
           <div class="topbar-actions">
             <label class="autosend-control" id="settings-panel">
               <span>
-                <strong>Auto-send replies</strong>
-                <small id="autosend-helper">Drafts require review</small>
+                <strong>Manual copy mode</strong>
+                <small id="autosend-helper">Nothing is sent automatically</small>
               </span>
-              <input id="autosend-toggle" type="checkbox">
+              <input id="autosend-toggle" type="checkbox" disabled>
               <span class="switch" aria-hidden="true"></span>
             </label>
             <button class="primary-button" id="process-ticket" type="button">
@@ -105,6 +105,7 @@
               <p class="review-state">
                 <span class="state-dot"></span>
                 <span id="review-state-copy">Review before send</span>
+                <span class="weather-summary" id="weather-summary">Weather loading…</span>
               </p>
             </section>
 
@@ -118,21 +119,20 @@
               </div>
 
               <div class="preference-grid">
-                <label class="preference-card">
+                <div class="preference-card preference-card-static">
                   <span>
-                    <strong>Auto-draft new tickets</strong>
-                    <small>When a readable Fluent Support ticket or Titan email opens, queue a ChatGPT draft automatically.</small>
+                    <strong>Manual support drafting</strong>
+                    <small>Fluent Support and Titan Mail only generate a ChatGPT draft after you click the support-page button.</small>
                   </span>
-                  <input id="autoprocess-toggle" type="checkbox">
-                  <span class="switch" aria-hidden="true"></span>
-                </label>
+                  <span class="preference-state">Enabled</span>
+                </div>
 
                 <label class="preference-card">
                   <span>
-                    <strong>Auto-send replies</strong>
-                    <small>Send after drafting. Keep off until selectors are verified on your current support screens.</small>
+                    <strong>Manual copy only</strong>
+                    <small>ChatGPT replies stay in the support sidebar. Copy and paste manually after review.</small>
                   </span>
-                  <input id="preferences-autosend-toggle" type="checkbox">
+                  <input id="preferences-autosend-toggle" type="checkbox" disabled>
                   <span class="switch" aria-hidden="true"></span>
                 </label>
               </div>
@@ -198,6 +198,8 @@
               <form class="task-form" id="task-form">
                 <label class="sr-only" for="task-title">Task title</label>
                 <input id="task-title" name="title" type="text" maxlength="160" placeholder="Add a task…" autocomplete="off" required>
+                <label class="sr-only" for="task-details">Task details</label>
+                <textarea id="task-details" name="details" rows="3" placeholder="Add full task details, URLs, notes, or customer context…"></textarea>
                 <label class="sr-only" for="task-priority">Priority</label>
                 <select id="task-priority" name="priority">
                   <option value="medium">Medium</option>
@@ -246,19 +248,6 @@
           </div>
 
           <aside class="insight-column" aria-label="Developer updates and session status">
-            <section class="news-section" aria-labelledby="news-title">
-              <div class="section-heading">
-                <h2 id="news-title">Developer updates</h2>
-                <button class="icon-button" id="refresh-news" type="button" aria-label="Refresh developer updates">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M20 7h-5V2"/>
-                    <path d="M20 7a8 8 0 1 0 1 8"/>
-                  </svg>
-                </button>
-              </div>
-              <div class="news-list" id="news-list" aria-live="polite"></div>
-            </section>
-
             <section class="release-section" aria-labelledby="release-title">
               <div class="section-heading">
                 <h2 id="release-title">Plugin release checker</h2>
@@ -285,6 +274,19 @@
               </div>
               <div class="health-list" id="health-list" aria-live="polite"></div>
               <p class="health-note">Open services are checked locally. No login data is read or stored.</p>
+            </section>
+
+            <section class="news-section" aria-labelledby="news-title">
+              <div class="section-heading">
+                <h2 id="news-title">Developer updates</h2>
+                <button class="icon-button" id="refresh-news" type="button" aria-label="Refresh developer updates">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 7h-5V2"/>
+                    <path d="M20 7a8 8 0 1 0 1 8"/>
+                  </svg>
+                </button>
+              </div>
+              <div class="news-list" id="news-list" aria-live="polite"></div>
             </section>
           </aside>
         </main>

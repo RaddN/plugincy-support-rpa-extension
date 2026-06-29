@@ -93,8 +93,13 @@ async function run() {
 
   await dashboard.locator("#page-title").waitFor({ state: "visible" });
   await dashboard.getByRole("heading", { name: "Today’s work" }).waitFor();
-  await dashboard.getByRole("heading", { name: "Developer updates" }).waitFor();
   await dashboard.getByRole("heading", { name: "Plugin release checker" }).waitFor();
+  await dashboard.getByRole("heading", { name: "Session health" }).waitFor();
+  await dashboard.getByRole("heading", { name: "Developer updates" }).waitFor();
+  await dashboard.locator("#weather-summary").waitFor({ state: "visible" });
+  await dashboard.locator("#weather-summary").getByText("Cumilla", { exact: false }).waitFor({
+    timeout: 30000
+  });
   await dashboard.locator(".release-row").first().waitFor({ state: "visible" });
   assert.equal(
     await dashboard.locator(".release-row").count(),
@@ -112,11 +117,9 @@ async function run() {
     timeout: 10000
   });
 
-  assert.equal(
-    await dashboard.locator("#autoprocess-toggle").isChecked(),
-    true,
-    "Auto-draft new tickets should be enabled by default."
-  );
+  await dashboard
+    .locator(".preference-card-static", { has: dashboard.getByText("Manual support drafting") })
+    .waitFor({ state: "visible" });
 
   await dashboard
     .locator(".product-card", { has: dashboard.getByText("Dynamic Ajax Product Filter") })
@@ -154,7 +157,10 @@ async function run() {
   await productCard.waitFor({ state: "detached" });
 
   const smokeTask = `Playwright smoke task ${Date.now()}`;
+  const smokeDetails =
+    "Smoke detail line 1\nSmoke detail line 2 with URL https://plugincy.com/playwright-smoke-task/";
   await dashboard.locator("#task-title").fill(smokeTask);
+  await dashboard.locator("#task-details").fill(smokeDetails);
   await dashboard.locator("#task-priority").selectOption("low");
   await dashboard.getByRole("button", { name: "Add", exact: true }).click();
 
@@ -162,9 +168,50 @@ async function run() {
     has: dashboard.getByText(smokeTask, { exact: true })
   });
   await smokeRow.waitFor({ state: "visible" });
+  await smokeRow.getByText("Smoke detail line 2", { exact: false }).waitFor();
   await smokeRow.getByRole("button", { name: `Complete ${smokeTask}` }).click();
   await smokeRow.getByRole("button", { name: `Delete ${smokeTask}` }).click();
   await smokeRow.waitFor({ state: "detached" });
+
+  const todoPage = await context.newPage();
+  await todoPage.goto("https://plugincy.com/", {
+    waitUntil: "domcontentloaded",
+    timeout: 60000
+  });
+  const overlayResult = await serviceWorker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({ url: "https://plugincy.com/*" });
+    if (!tabs[0]?.id) {
+      return {
+        ok: false,
+        error: "No plugincy.com tab found for To-Do overlay smoke test."
+      };
+    }
+
+    await chrome.scripting.executeScript({
+      target: { tabId: tabs[0].id },
+      files: ["content/todo-overlay.js"]
+    });
+    const response = await chrome.tabs.sendMessage(tabs[0].id, {
+      type: "RPA_TODO_TOGGLE"
+    });
+
+    return {
+      ok: true,
+      response
+    };
+  });
+  assert.equal(overlayResult.ok, true, JSON.stringify(overlayResult));
+  await todoPage.locator("#plugincy-todo-overlay-host").waitFor({
+    state: "attached",
+    timeout: 10000
+  });
+  assert.equal(
+    await todoPage
+      .locator("#plugincy-todo-overlay-host")
+      .evaluate((host) => host.dataset.open),
+    "true",
+    "The To-Do overlay should open on a normal web tab."
+  );
 
   await dashboard.screenshot({
     path: screenshotPath,
@@ -189,7 +236,9 @@ async function run() {
   console.log("Synced task add/complete/delete: PASS");
   console.log("Product library add/reference-links/delete: PASS");
   console.log("WordPress.org release checker: PASS");
-  console.log("Auto-draft default setting: PASS");
+  console.log("Manual support drafting default: PASS");
+  console.log("Weather/rain-risk summary: PASS");
+  console.log("Any-tab To-Do overlay: PASS");
   console.log(`ChatGPT opened: PASS (${composerVisible ? "composer detected" : "sign-in/UI check needed"})`);
   console.log(`Dashboard screenshot: ${screenshotPath}`);
 

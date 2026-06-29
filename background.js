@@ -10,6 +10,7 @@ const DEFAULT_PRODUCTS_SEEDED_KEY = "rpa_default_products_seeded_v1";
 const ACTIVITY_KEY = "rpa_activity";
 const NEWS_CACHE_KEY = "rpa_news_cache";
 const RELEASE_CACHE_KEY = "rpa_release_cache";
+const WEATHER_CACHE_KEY = "rpa_weather_cache";
 const DIRECTORY_WATCH_KEY = "rpa_directory_watch";
 const SOURCE_STATE_KEY = "rpa_source_state";
 const NOTIFICATION_TARGETS_KEY = "rpa_notification_targets";
@@ -25,10 +26,19 @@ const ACTIVE_JOB_TIMEOUT_MS = 6 * 60 * 1000;
 const RELEASE_CADENCE_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GPT_URL = "https://chatgpt.com/";
+const DEFAULT_WEATHER_LOCATION = "Police Line, Cumilla";
+const DEFAULT_WEATHER_COORDINATES = {
+  name: "Police Line, Cumilla",
+  country: "Bangladesh",
+  latitude: 23.4665886,
+  longitude: 91.1719966,
+  timezone: "Asia/Dhaka"
+};
+const WEATHER_CACHE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
 const DEFAULT_SETTINGS = {
   autoSendReplies: false,
-  autoProcessTickets: true,
+  autoProcessTickets: false,
   theme: "light"
 };
 
@@ -174,8 +184,8 @@ chrome.runtime.onStartup.addListener(() => {
   void initializeExtension();
 });
 
-chrome.action.onClicked.addListener(() => {
-  void chrome.tabs.create({ url: chrome.runtime.getURL("dashboard/newtab.html") });
+chrome.action.onClicked.addListener((tab) => {
+  void openTodoOverlayForTab(tab);
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -189,6 +199,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
   if (alarm.name === "rpa-release-refresh") {
     void refreshReleaseCache();
+  }
+
+  if (alarm.name === "rpa-weather-refresh") {
+    void refreshWeatherCache().catch((error) => {
+      console.warn("Weather refresh failed:", error);
+    });
   }
 
   if (alarm.name === "rpa-directory-watch") {
@@ -229,17 +245,16 @@ async function initializeExtension() {
 
   if (
     !settingsResult[SETTINGS_KEY] ||
-    Object.keys(DEFAULT_SETTINGS).some((key) => !(key in existingSettings))
+    Object.keys(DEFAULT_SETTINGS).some((key) => !(key in existingSettings)) ||
+    existingSettings.autoProcessTickets !== false ||
+    existingSettings.autoSendReplies !== false
   ) {
     await chrome.storage.sync.set({
       [SETTINGS_KEY]: {
         ...DEFAULT_SETTINGS,
         ...existingSettings,
-        autoSendReplies: Boolean(existingSettings.autoSendReplies),
-        autoProcessTickets:
-          existingSettings.autoProcessTickets === undefined
-            ? DEFAULT_SETTINGS.autoProcessTickets
-            : Boolean(existingSettings.autoProcessTickets),
+        autoSendReplies: false,
+        autoProcessTickets: false,
         theme: existingSettings.theme === "dark" ? "dark" : "light"
       }
     });
@@ -251,12 +266,14 @@ async function initializeExtension() {
     chrome.alarms.create("rpa-news-refresh", { periodInMinutes: 60 }),
     chrome.alarms.create("rpa-queue-watchdog", { periodInMinutes: 1 }),
     chrome.alarms.create("rpa-release-refresh", { periodInMinutes: 360 }),
+    chrome.alarms.create("rpa-weather-refresh", { periodInMinutes: 180 }),
     chrome.alarms.create("rpa-directory-watch", { periodInMinutes: 15 })
   ]);
 
   const cacheResult = await chrome.storage.local.get([
     NEWS_CACHE_KEY,
     RELEASE_CACHE_KEY,
+    WEATHER_CACHE_KEY,
     DIRECTORY_WATCH_KEY
   ]);
   const fetchedAt = Number(cacheResult[NEWS_CACHE_KEY]?.fetchedAt || 0);
@@ -267,6 +284,17 @@ async function initializeExtension() {
   const releasesFetchedAt = Number(cacheResult[RELEASE_CACHE_KEY]?.fetchedAt || 0);
   if (Date.now() - releasesFetchedAt > 6 * 60 * 60 * 1000) {
     void refreshReleaseCache();
+  }
+
+  const weatherFetchedAt = Number(cacheResult[WEATHER_CACHE_KEY]?.fetchedAt || 0);
+  const cachedWeatherLocation = cleanText(cacheResult[WEATHER_CACHE_KEY]?.location?.name || "", 120);
+  if (
+    cachedWeatherLocation !== DEFAULT_WEATHER_COORDINATES.name ||
+    Date.now() - weatherFetchedAt > WEATHER_CACHE_MAX_AGE_MS
+  ) {
+    void refreshWeatherCache().catch((error) => {
+      console.warn("Weather refresh failed:", error);
+    });
   }
 
   const directoryCheckedAt = Number(cacheResult[DIRECTORY_WATCH_KEY]?.checkedAt || 0);
@@ -312,6 +340,12 @@ async function routeMessage(message, sender) {
       await Promise.all([refreshReleaseCache(), refreshDirectoryWatch()]);
       return { refreshed: true };
 
+    case "RPA_REFRESH_WEATHER":
+      return {
+        refreshed: true,
+        weather: await refreshWeatherCache(message.location)
+      };
+
     case "RPA_REPORT_SOURCE_STATE":
       assertSupportSender(sender);
       return handleSourceStateReport(message, sender.tab);
@@ -324,6 +358,31 @@ async function routeMessage(message, sender) {
 
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
+  }
+}
+
+async function openTodoOverlayForTab(tab) {
+  if (!tab?.id || !/^https?:\/\//i.test(tab.url || "")) {
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL("dashboard/newtab.html")
+    });
+    return;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["content/todo-overlay.js"]
+    });
+
+    await chrome.tabs.sendMessage(tab.id, {
+      type: "RPA_TODO_TOGGLE"
+    });
+  } catch (error) {
+    console.warn("Could not open the tab To-Do overlay; opening dashboard instead:", error);
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL("dashboard/newtab.html")
+    });
   }
 }
 
@@ -997,7 +1056,7 @@ async function handleGptResult(message) {
     await logActivity({
       status: "draft",
       title: job.ticket.subject,
-      detail: "AI response inserted as a support draft.",
+      detail: "AI response is ready in the support-page sidebar.",
       source: job.ticket.source,
       sourceUrl: job.ticket.pageUrl
     });
@@ -1359,6 +1418,125 @@ async function refreshNewsCache() {
       sources
     }
   });
+}
+
+async function refreshWeatherCache(locationName = DEFAULT_WEATHER_LOCATION) {
+  const requestedLocation = cleanText(locationName || DEFAULT_WEATHER_LOCATION, 120);
+  const place = isDefaultWeatherLocation(requestedLocation)
+    ? DEFAULT_WEATHER_COORDINATES
+    : await lookupWeatherLocation(requestedLocation);
+
+  const forecastEndpoint = new URL("https://api.open-meteo.com/v1/forecast");
+  forecastEndpoint.searchParams.set("latitude", String(place.latitude));
+  forecastEndpoint.searchParams.set("longitude", String(place.longitude));
+  forecastEndpoint.searchParams.set(
+    "current",
+    "temperature_2m,precipitation,rain,weather_code"
+  );
+  forecastEndpoint.searchParams.set(
+    "daily",
+    "precipitation_probability_max,precipitation_sum,weather_code"
+  );
+  forecastEndpoint.searchParams.set("forecast_days", "7");
+  forecastEndpoint.searchParams.set("timezone", "auto");
+
+  const forecastResponse = await fetch(forecastEndpoint.href, {
+    method: "GET",
+    credentials: "omit",
+    cache: "no-cache",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (!forecastResponse.ok) {
+    throw new Error(`Weather forecast failed with HTTP ${forecastResponse.status}.`);
+  }
+
+  const forecast = await forecastResponse.json();
+  const times = Array.isArray(forecast?.daily?.time) ? forecast.daily.time : [];
+  const probabilities = Array.isArray(forecast?.daily?.precipitation_probability_max)
+    ? forecast.daily.precipitation_probability_max
+    : [];
+  const precipitation = Array.isArray(forecast?.daily?.precipitation_sum)
+    ? forecast.daily.precipitation_sum
+    : [];
+  const weatherCodes = Array.isArray(forecast?.daily?.weather_code)
+    ? forecast.daily.weather_code
+    : [];
+  const daily = times.map((date, index) => ({
+    date: cleanText(date, 20),
+    rainProbability: Math.max(0, Number(probabilities[index] || 0)),
+    precipitationSum: Math.max(0, Number(precipitation[index] || 0)),
+    weatherCode: Number(weatherCodes[index] || 0)
+  }));
+
+  const cache = {
+    fetchedAt: Date.now(),
+    provider: "Open-Meteo",
+    requestedLocation,
+    location: {
+      name: cleanText(place.name || requestedLocation, 120),
+      country: cleanText(place.country || "", 80),
+      latitude: Number(place.latitude),
+      longitude: Number(place.longitude),
+      timezone: cleanText(forecast.timezone || place.timezone || "", 80)
+    },
+    current: {
+      temperature: Number(forecast?.current?.temperature_2m ?? NaN),
+      precipitation: Number(forecast?.current?.precipitation ?? 0),
+      rain: Number(forecast?.current?.rain ?? 0),
+      weatherCode: Number(forecast?.current?.weather_code || 0),
+      observedAt: cleanText(forecast?.current?.time || "", 40)
+    },
+    daily,
+    umbrellaDays: daily.filter((day) => Number(day.rainProbability) > 40)
+  };
+
+  await chrome.storage.local.set({
+    [WEATHER_CACHE_KEY]: cache
+  });
+
+  return cache;
+}
+
+function isDefaultWeatherLocation(value) {
+  const normalized = cleanText(value, 120).toLowerCase();
+  return (
+    !normalized ||
+    normalized === DEFAULT_WEATHER_LOCATION.toLowerCase() ||
+    normalized === "police lines, cumilla" ||
+    normalized === "police line cumilla"
+  );
+}
+
+async function lookupWeatherLocation(requestedLocation) {
+  const geocodeEndpoint = new URL("https://geocoding-api.open-meteo.com/v1/search");
+  geocodeEndpoint.searchParams.set("name", requestedLocation);
+  geocodeEndpoint.searchParams.set("count", "1");
+  geocodeEndpoint.searchParams.set("language", "en");
+  geocodeEndpoint.searchParams.set("format", "json");
+
+  const geocodeResponse = await fetch(geocodeEndpoint.href, {
+    method: "GET",
+    credentials: "omit",
+    cache: "no-cache",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (!geocodeResponse.ok) {
+    throw new Error(`Weather location lookup failed with HTTP ${geocodeResponse.status}.`);
+  }
+
+  const geocode = await geocodeResponse.json();
+  const place = Array.isArray(geocode?.results) ? geocode.results[0] : null;
+  if (!place || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) {
+    throw new Error(`Weather location "${requestedLocation}" was not found.`);
+  }
+
+  return place;
 }
 
 async function refreshReleaseCache() {

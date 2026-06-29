@@ -9,17 +9,9 @@
   const PLATFORM = location.hostname === "hostinger.titan.email" ? "titan-mail" : "fluent-support";
   const UI_HOST_ID = "plugincy-support-rpa-host";
   const MAX_TICKET_LENGTH = 24000;
-  const SETTINGS_KEY = "rpa_settings";
-  const DEFAULT_SETTINGS = {
-    autoSendReplies: false,
-    autoProcessTickets: true
-  };
 
   let ui = null;
   let captureInProgress = false;
-  let autoTimer = 0;
-  let lastAutoSignature = "";
-  let lastLocationKey = location.href;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message.type !== "string") {
@@ -64,7 +56,6 @@
 
   if (window.top === window) {
     mountLauncher();
-    startAutoProcessingWatcher();
   }
 
   async function captureAndQueue(options = {}) {
@@ -76,26 +67,12 @@
     }
 
     captureInProgress = true;
+    openDraftSidebar();
+    setDraftResponse("");
     setUiState("working", "Reading the current ticket…");
 
     try {
-      const ticket =
-        options.ticket ||
-        scrapeCurrentTicket({
-          requireDetail: Boolean(options.auto)
-        });
-
-      if (options.auto) {
-        const signature = createTicketSignature(ticket);
-        if (!signature || signature === lastAutoSignature) {
-          return {
-            accepted: false,
-            skipped: true,
-            reason: "duplicate"
-          };
-        }
-        lastAutoSignature = signature;
-      }
+      const ticket = options.ticket || scrapeCurrentTicket();
       setUiState("working", "Queued for ChatGPT…");
 
       const response = await safeRuntimeSendMessage({
@@ -149,80 +126,6 @@
       ticketId,
       pageUrl: location.href
     };
-  }
-
-  function startAutoProcessingWatcher() {
-    const schedule = (delay = 1400) => {
-      window.clearTimeout(autoTimer);
-      autoTimer = window.setTimeout(() => {
-        void maybeAutoProcessCurrentTicket();
-      }, delay);
-    };
-
-    const observer = new MutationObserver(() => {
-      schedule();
-    });
-
-    const observeRoot = () => {
-      const root = document.body || document.documentElement;
-      if (!root) {
-        window.setTimeout(observeRoot, 500);
-        return;
-      }
-
-      observer.observe(root, {
-        childList: true,
-        subtree: true,
-        characterData: true
-      });
-      schedule(2500);
-    };
-
-    observeRoot();
-
-    window.setInterval(() => {
-      const key = location.href;
-      if (key !== lastLocationKey) {
-        lastLocationKey = key;
-        schedule(1100);
-      }
-    }, 1000);
-
-    try {
-      chrome.storage.onChanged.addListener((changes, areaName) => {
-        if (areaName === "sync" && changes[SETTINGS_KEY]) {
-          schedule(700);
-        }
-      });
-    } catch {
-      // Existing page contexts can be invalidated during extension reload.
-    }
-  }
-
-  async function maybeAutoProcessCurrentTicket() {
-    try {
-      const settings = await readSettings();
-      if (!settings.autoProcessTickets || captureInProgress || !isLikelyTicketDetailOpen()) {
-        return;
-      }
-
-      const ticket = scrapeCurrentTicket({ requireDetail: true });
-      if (ticket.text.length < 30) {
-        return;
-      }
-
-      const signature = createTicketSignature(ticket);
-      if (!signature || signature === lastAutoSignature) {
-        return;
-      }
-
-      await captureAndQueue({
-        auto: true,
-        ticket
-      });
-    } catch {
-      // Auto mode stays quiet until a ticket detail view is readable.
-    }
   }
 
   function isLikelyTicketDetailOpen() {
@@ -290,23 +193,6 @@
     return `${ticket.source}:${ticket.ticketId || "ticket"}:${Math.abs(hash)}`;
   }
 
-  async function readSettings() {
-    try {
-      const result = await chrome.storage.sync.get(SETTINGS_KEY);
-      const stored = result[SETTINGS_KEY] || {};
-      return {
-        ...DEFAULT_SETTINGS,
-        autoSendReplies: Boolean(stored.autoSendReplies),
-        autoProcessTickets:
-          stored.autoProcessTickets === undefined
-            ? DEFAULT_SETTINGS.autoProcessTickets
-            : Boolean(stored.autoProcessTickets)
-      };
-    } catch {
-      return DEFAULT_SETTINGS;
-    }
-  }
-
   function extractFluentSubject() {
     return firstText([
       "[data-testid='ticket-title']",
@@ -364,7 +250,7 @@
     ];
 
     for (const selectors of selectorGroups) {
-      const content = collectConversationText(selectors);
+      const content = collectConversationBlocks(selectors, "Conversation message");
       if (content.length >= 20) {
         return content;
       }
@@ -375,7 +261,7 @@
 
   function extractTitanConversation() {
     const iframeText = collectReadableIframeText();
-    const content = collectConversationText([
+    const content = collectConversationBlocks([
       "[data-testid='message-body']",
       "[data-testid*='message-content']",
       "[data-testid*='mail-body']",
@@ -385,13 +271,35 @@
       "[class*='mail-body']",
       "[class*='message-view'] [role='document']",
       "[role='main'] [role='document']"
-    ]);
+    ], "Email message");
+    const iframeBlock = iframeText ? `[Email body iframe]\n${iframeText}` : "";
 
-    if (content.length >= 20 && iframeText.length >= 20) {
-      return `${content}\n\n${iframeText}`;
+    if (content.length >= 20 && iframeBlock.length >= 20) {
+      return `${content}\n\n${iframeBlock}`;
     }
 
-    return content || iframeText || fallbackMainText();
+    return content || iframeBlock || fallbackMainText();
+  }
+
+  function collectConversationBlocks(selectors, label) {
+    const content = collectConversationText(selectors);
+    if (content.length < 20) {
+      return content;
+    }
+
+    const parts = content
+      .split(/\n{2,}/)
+      .map((part) => normalizeText(part))
+      .filter((part) => part.length >= 3);
+
+    if (parts.length <= 1) {
+      return `[${label} 1]\n${content}`.slice(0, MAX_TICKET_LENGTH);
+    }
+
+    return parts
+      .map((part, index) => `[${label} ${index + 1}]\n${part}`)
+      .join("\n\n")
+      .slice(0, MAX_TICKET_LENGTH);
   }
 
   function collectConversationText(selectors) {
@@ -559,11 +467,14 @@
 
   async function handleAutomationResult(message) {
     if (message.status === "escalated") {
+      openDraftSidebar();
+      setDraftResponse(message.summary || "This ticket was added to To-Do for developer review.");
       setUiState("escalated", "Escalated to Today’s work for developer review.");
       return { handled: true, escalated: true };
     }
 
     if (message.status === "error") {
+      openDraftSidebar();
       setUiState("error", message.error || "Automation stopped before drafting.");
       return { handled: true, error: true };
     }
@@ -572,183 +483,11 @@
       return { handled: false };
     }
 
-    setUiState("working", "Inserting the draft reply…");
-    const editor = await findOrOpenReplyEditor();
-    if (!editor) {
-      setUiState("error", "Draft ready, but the reply editor was not found.");
-      throw new Error("The reply editor could not be found. Open Reply and try again.");
-    }
+    openDraftSidebar();
+    setDraftResponse(message.response);
+    setUiState("draft", "Draft ready. Copy it from the sidebar.");
+    return { handled: true, drafted: true, copied: false, inserted: false, sent: false };
 
-    setEditorValue(editor, message.response);
-
-    const settings = await readSettings();
-    const autoSend = Boolean(settings.autoSendReplies);
-    if (autoSend) {
-      const sent = await clickSupportSendButton();
-      if (!sent) {
-        setUiState("draft", "Draft inserted. Review and send it manually.");
-        return { handled: true, drafted: true, sent: false };
-      }
-
-      setUiState("success", "Reply sent automatically.");
-      return { handled: true, drafted: true, sent: true };
-    }
-
-    setUiState("draft", "Draft inserted. Review before sending.");
-    return { handled: true, drafted: true, sent: false };
-  }
-
-  async function findOrOpenReplyEditor() {
-    let editor = findReplyEditor();
-    if (editor) {
-      return editor;
-    }
-
-    const replyButton = findButtonBySelectorsOrText(
-      [
-        "[data-testid='reply-button']",
-        "button[aria-label*='Reply' i]",
-        "button[class*='reply']",
-        "[role='button'][aria-label*='Reply' i]"
-      ],
-      ["reply", "respond"]
-    );
-
-    if (replyButton) {
-      replyButton.click();
-      editor = await waitFor(findReplyEditor, 8000);
-    }
-
-    return editor;
-  }
-
-  function findReplyEditor() {
-    const selectors =
-      PLATFORM === "titan-mail"
-        ? [
-            "[data-testid='composer'] [contenteditable='true']",
-            "[data-testid*='reply'] [contenteditable='true']",
-            "[class*='composer'] [contenteditable='true']",
-            "[class*='reply'] [contenteditable='true']",
-            "textarea[aria-label*='message' i]",
-            "textarea[placeholder*='reply' i]"
-          ]
-        : [
-            "[data-testid='reply-editor'] [contenteditable='true']",
-            ".fs_reply_box textarea",
-            ".fs-reply-box textarea",
-            ".ticket-reply textarea",
-            ".ql-editor[contenteditable='true']",
-            ".ProseMirror[contenteditable='true']",
-            "[class*='reply'] textarea",
-            "[class*='reply'] [contenteditable='true']"
-          ];
-
-    for (const selector of selectors) {
-      for (const candidate of document.querySelectorAll(selector)) {
-        if (
-          (candidate instanceof HTMLTextAreaElement ||
-            candidate instanceof HTMLInputElement ||
-            candidate instanceof HTMLElement) &&
-          isMeaningfullyVisible(candidate) &&
-          !candidate.hasAttribute("disabled")
-        ) {
-          return candidate;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  function setEditorValue(editor, value) {
-    editor.focus();
-
-    if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
-      const prototype =
-        editor instanceof HTMLTextAreaElement
-          ? HTMLTextAreaElement.prototype
-          : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-      setter?.call(editor, value);
-      editor.dispatchEvent(new InputEvent("input", { bubbles: true, data: value }));
-      editor.dispatchEvent(new Event("change", { bubbles: true }));
-      return;
-    }
-
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-
-    const inserted = document.execCommand("insertText", false, value);
-    if (!inserted || normalizeText(editor.innerText).length < normalizeText(value).length * 0.8) {
-      editor.replaceChildren();
-      const lines = String(value).split("\n");
-      lines.forEach((line, index) => {
-        if (index > 0) {
-          editor.append(document.createElement("br"));
-        }
-        editor.append(document.createTextNode(line));
-      });
-    }
-
-    editor.dispatchEvent(
-      new InputEvent("input", {
-        bubbles: true,
-        inputType: "insertText",
-        data: value
-      })
-    );
-  }
-
-  async function clickSupportSendButton() {
-    await delay(250);
-    const sendButton = findButtonBySelectorsOrText(
-      [
-        "[data-testid='send-reply-button']",
-        "[data-testid='send-button']",
-        "button[aria-label*='Send' i]",
-        ".fs_reply_box button[type='submit']",
-        ".fs-reply-box button[type='submit']",
-        "[class*='reply'] button[type='submit']",
-        "[class*='composer'] button[type='submit']"
-      ],
-      ["send reply", "submit reply", "send"]
-    );
-
-    if (!sendButton || sendButton.disabled || sendButton.getAttribute("aria-disabled") === "true") {
-      return false;
-    }
-
-    sendButton.click();
-    return true;
-  }
-
-  function findButtonBySelectorsOrText(selectors, labels) {
-    for (const selector of selectors) {
-      const element = [...document.querySelectorAll(selector)].find(
-        (candidate) =>
-          candidate instanceof HTMLElement &&
-          isMeaningfullyVisible(candidate) &&
-          candidate.getAttribute("aria-disabled") !== "true"
-      );
-      if (element) {
-        return element;
-      }
-    }
-
-    const normalizedLabels = labels.map((label) => label.toLowerCase());
-    return [...document.querySelectorAll("button, [role='button']")].find((candidate) => {
-      if (!(candidate instanceof HTMLElement) || !isMeaningfullyVisible(candidate)) {
-        return false;
-      }
-      const text = normalizeText(
-        candidate.getAttribute("aria-label") || candidate.textContent || ""
-      ).toLowerCase();
-      return normalizedLabels.some((label) => text === label || text.startsWith(`${label} `));
-    });
   }
 
   function detectAuthenticatedState() {
@@ -768,100 +507,264 @@
       return;
     }
 
+    mountSupportSidebar();
+  }
+
+  function mountSupportSidebar() {
     const host = document.createElement("div");
     host.id = UI_HOST_ID;
-    host.style.position = "fixed";
-    host.style.right = "20px";
-    host.style.bottom = "20px";
-    host.style.zIndex = "2147483647";
     host.style.all = "initial";
+    host.style.position = "fixed";
+    host.style.inset = "0 0 0 auto";
+    host.style.zIndex = "2147483647";
+    host.dataset.open = "false";
 
     const shadow = host.attachShadow({ mode: "open" });
     shadow.innerHTML = `
       <style>
         :host { color-scheme: light; }
-        .panel {
-          width: 260px;
-          box-sizing: border-box;
-          padding: 10px;
+        .launcher {
+          position: fixed;
+          right: 20px;
+          bottom: 20px;
+          display: inline-flex;
+          min-height: 44px;
+          align-items: center;
+          gap: 9px;
+          padding: 0 16px;
+          border: 0;
+          border-radius: 999px;
+          background: #0967e8;
+          box-shadow: 0 18px 42px rgba(9, 103, 232, .28);
+          color: #ffffff;
+          cursor: pointer;
+          font: 800 13px/1 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          letter-spacing: -0.01em;
+        }
+        .launcher:hover { background: #0759ca; }
+        .launcher:disabled { cursor: wait; opacity: .68; }
+        .launcher:focus-visible,
+        .copy-button:focus-visible,
+        .regenerate-button:focus-visible,
+        .close-button:focus-visible {
+          outline: 3px solid rgba(9, 103, 232, .24);
+          outline-offset: 3px;
+        }
+        .sidebar {
+          position: fixed;
+          top: 18px;
+          right: 18px;
+          bottom: 18px;
+          display: grid;
+          width: min(430px, calc(100vw - 36px));
+          grid-template-rows: auto auto minmax(0, 1fr) auto;
+          overflow: hidden;
+          border: 1px solid #d7deea;
+          border-radius: 22px;
+          background: radial-gradient(circle at 90% 0%, rgba(9, 103, 232, .14), transparent 30%), #ffffff;
+          box-shadow: 0 26px 70px rgba(8, 28, 63, .26);
+          color: #10213d;
+          font: 500 13px/1.5 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          transform: translateX(calc(100% + 24px));
+          transition: transform 180ms ease;
+        }
+        :host([data-open="true"]) .sidebar { transform: translateX(0); }
+        :host([data-open="true"]) .launcher { display: none; }
+        header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 18px 18px 12px;
+          border-bottom: 1px solid #e8edf5;
+        }
+        h2 {
+          margin: 0;
+          color: #10213d;
+          font-size: 18px;
+          letter-spacing: -0.03em;
+          line-height: 1.15;
+        }
+        .subtitle {
+          margin: 5px 0 0;
+          color: #61728c;
+          font-size: 12px;
+        }
+        .close-button {
+          display: grid;
+          width: 34px;
+          height: 34px;
+          place-items: center;
+          border: 0;
+          border-radius: 10px;
+          background: #f2f5f9;
+          color: #44546a;
+          cursor: pointer;
+          font-size: 18px;
+        }
+        .status-card {
+          margin: 14px 18px;
+          padding: 12px;
           border: 1px solid #d7deea;
           border-radius: 14px;
-          background: #ffffff;
-          box-shadow: 0 18px 42px rgba(8, 28, 63, 0.18);
-          color: #10213d;
-          font: 500 13px/1.4 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          background: #f8fbff;
         }
-        .row { display: flex; align-items: center; gap: 10px; }
-        .mark {
-          display: grid;
-          width: 32px;
-          height: 32px;
-          place-items: center;
-          flex: 0 0 auto;
-          border-radius: 10px;
-          background: #082b59;
-          color: #ffffff;
-          font-weight: 800;
-          letter-spacing: -0.03em;
-        }
-        .copy { min-width: 0; flex: 1; }
-        .title { margin: 0; font-weight: 750; font-size: 13px; color: #10213d; }
-        .status {
-          overflow: hidden;
-          margin: 2px 0 0;
-          color: #607089;
+        .status-label {
+          margin: 0;
+          color: #0967e8;
           font-size: 11px;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          font-weight: 850;
+          letter-spacing: .04em;
+          text-transform: uppercase;
         }
-        button {
-          width: 100%;
-          margin-top: 9px;
-          padding: 9px 12px;
+        .status {
+          margin: 4px 0 0;
+          color: #44546a;
+          font-size: 12px;
+        }
+        .draft-wrap {
+          min-height: 0;
+          margin: 0 18px 14px;
+          overflow: auto;
+          border: 1px solid #d7deea;
+          border-radius: 15px;
+          background: #ffffff;
+        }
+        .draft {
+          min-height: 220px;
+          margin: 0;
+          padding: 14px;
+          color: #10213d;
+          font: 500 13px/1.58 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        }
+        .draft.is-empty {
+          display: grid;
+          place-items: center;
+          color: #8a98ad;
+          font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          text-align: center;
+        }
+        footer {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          gap: 10px;
+          padding: 0 18px 18px;
+        }
+        footer button {
+          min-height: 40px;
           border: 0;
-          border-radius: 9px;
-          background: #0967e8;
-          color: white;
+          border-radius: 11px;
           cursor: pointer;
-          font: 700 12px/1.2 inherit;
-          transition: background 140ms ease, transform 140ms ease;
+          font: 800 12px/1 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
-        button:hover { background: #0759ca; }
-        button:active { transform: translateY(1px); }
-        button:focus-visible { outline: 3px solid rgba(9, 103, 232, .25); outline-offset: 2px; }
-        button:disabled { cursor: wait; opacity: .68; }
-        .panel[data-state="success"] .mark,
-        .panel[data-state="draft"] .mark { background: #087a55; }
-        .panel[data-state="escalated"] .mark { background: #b56806; }
-        .panel[data-state="error"] .mark { background: #b42318; }
+        .copy-button {
+          background: #0967e8;
+          color: #ffffff;
+        }
+        .copy-button:disabled {
+          cursor: not-allowed;
+          opacity: .52;
+        }
+        .regenerate-button {
+          background: #eef4ff;
+          color: #0967e8;
+        }
+        .panel[data-state="draft"] .status-label,
+        .panel[data-state="success"] .status-label { color: #087a55; }
+        .panel[data-state="escalated"] .status-label { color: #b56806; }
+        .panel[data-state="error"] .status-label { color: #b42318; }
       </style>
-      <section class="panel" data-state="ready" aria-live="polite">
-        <div class="row">
-          <span class="mark" aria-hidden="true">P</span>
-          <div class="copy">
-            <p class="title">Support RPA</p>
-            <p class="status">Ready to draft this ticket.</p>
+      <button class="launcher" type="button">Generate GPT reply</button>
+      <aside class="sidebar panel" data-state="ready" aria-live="polite" aria-label="ChatGPT support draft">
+        <header>
+          <div>
+            <h2>ChatGPT draft sidebar</h2>
+            <p class="subtitle">Generates only after you click. Copy the reply when it is ready.</p>
           </div>
+          <button class="close-button" type="button" aria-label="Close draft sidebar">×</button>
+        </header>
+        <section class="status-card">
+          <p class="status-label">Ready</p>
+          <p class="status">Open a ticket or email, then generate a reply.</p>
+        </section>
+        <div class="draft-wrap">
+          <pre class="draft is-empty">No draft yet. Click Generate to send the full visible conversation to ChatGPT.</pre>
         </div>
-        <button type="button">Draft with ChatGPT</button>
-      </section>
+        <footer>
+          <button class="copy-button" type="button" disabled>Copy draft</button>
+          <button class="regenerate-button" type="button">Generate again</button>
+        </footer>
+      </aside>
     `;
 
     document.documentElement.append(host);
     ui = {
+      host,
       panel: shadow.querySelector(".panel"),
+      statusLabel: shadow.querySelector(".status-label"),
       status: shadow.querySelector(".status"),
-      button: shadow.querySelector("button")
+      button: shadow.querySelector(".launcher"),
+      regenerateButton: shadow.querySelector(".regenerate-button"),
+      copyButton: shadow.querySelector(".copy-button"),
+      closeButton: shadow.querySelector(".close-button"),
+      draft: shadow.querySelector(".draft"),
+      lastDraft: ""
     };
 
-    ui.button.addEventListener("click", () => {
+    const runGeneration = () => {
+      openDraftSidebar();
       void captureAndQueue().catch((error) => {
-        setUiState(
-          "error",
-          error instanceof Error ? error.message : "Ticket automation failed."
-        );
+        setUiState("error", error instanceof Error ? error.message : "Ticket automation failed.");
       });
+    };
+
+    ui.button.addEventListener("click", runGeneration);
+    ui.regenerateButton.addEventListener("click", runGeneration);
+    ui.copyButton.addEventListener("click", () => {
+      void copyDraftToClipboard();
     });
+    ui.closeButton.addEventListener("click", () => {
+      ui.host.dataset.open = "false";
+    });
+  }
+
+  function openDraftSidebar() {
+    if (!ui) {
+      mountLauncher();
+    }
+    if (ui?.host) {
+      ui.host.dataset.open = "true";
+    }
+  }
+
+  function setDraftResponse(value) {
+    if (!ui?.draft) {
+      return;
+    }
+
+    const draft = String(value || "").trim();
+    ui.lastDraft = draft;
+    ui.draft.textContent = draft || "Waiting for ChatGPT response...";
+    ui.draft.classList.toggle("is-empty", !draft);
+    if (ui.copyButton) {
+      ui.copyButton.disabled = !draft;
+    }
+  }
+
+  async function copyDraftToClipboard() {
+    const draft = String(ui?.lastDraft || "").trim();
+    if (!draft) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(draft);
+      setUiState("success", "Draft copied. Paste it into the support reply editor when ready.");
+    } catch {
+      setUiState("error", "Copy failed. Select the draft text and copy manually.");
+    }
   }
 
   function setUiState(state, status) {
@@ -870,9 +773,27 @@
     }
 
     ui.panel.dataset.state = state;
+    if (ui.statusLabel) {
+      ui.statusLabel.textContent =
+        state === "working"
+          ? "Working"
+          : state === "draft"
+            ? "Draft ready"
+            : state === "success"
+              ? "Copied"
+              : state === "escalated"
+                ? "Escalated"
+                : state === "error"
+                  ? "Needs attention"
+                  : "Ready";
+    }
     ui.status.textContent = status;
     ui.button.disabled = state === "working";
-    ui.button.textContent = state === "working" ? "Working…" : "Draft with ChatGPT";
+    ui.button.textContent = state === "working" ? "Working..." : "Generate GPT reply";
+    if (ui.regenerateButton) {
+      ui.regenerateButton.disabled = state === "working";
+      ui.regenerateButton.textContent = state === "working" ? "Generating..." : "Generate again";
+    }
   }
 
   async function safeRuntimeSendMessage(payload) {
