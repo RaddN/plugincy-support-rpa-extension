@@ -90,12 +90,101 @@
               <input id="autosend-toggle" type="checkbox">
               <span class="switch" aria-hidden="true"></span>
             </label>
-            <button class="primary-button" id="process-ticket" type="button">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m8 5 10 7-10 7V5Z"/>
-              </svg>
-              <span>Process current ticket</span>
-            </button>
+            <div class="chrome-defaults" aria-label="Google shortcuts">
+              <a class="chrome-link" href="https://mail.google.com/" target="_blank" rel="noreferrer">Gmail</a>
+              <a class="chrome-link" href="https://images.google.com/" target="_blank" rel="noreferrer">Images</a>
+              <div class="chrome-menu-shell">
+                <button class="chrome-icon-button" id="google-apps-trigger" type="button" aria-label="Google apps" aria-haspopup="true" aria-expanded="false" aria-controls="google-apps-menu">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 5h.01M12 5h.01M19 5h.01M5 12h.01M12 12h.01M19 12h.01M5 19h.01M12 19h.01M19 19h.01"/>
+                  </svg>
+                </button>
+                <div class="chrome-popover chrome-apps-popover" id="google-apps-menu" role="menu" aria-labelledby="google-apps-trigger" hidden>
+                  <div class="chrome-popover-head">
+                    <strong>Your favourites</strong>
+                    <a href="https://myaccount.google.com/" target="_blank" rel="noreferrer" aria-label="Manage Google app shortcuts">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 20h4L19 9l-4-4L4 16v4Z"/>
+                        <path d="m13 7 4 4"/>
+                      </svg>
+                    </a>
+                  </div>
+                  <div class="google-app-grid">
+                    <a class="google-app" href="https://myaccount.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon account-icon">A</span>
+                      <span>Account</span>
+                    </a>
+                    <a class="google-app" href="https://mail.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon gmail-icon">M</span>
+                      <span>Gmail</span>
+                    </a>
+                    <a class="google-app" href="https://docs.google.com/document/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon docs-icon">D</span>
+                      <span>Docs</span>
+                    </a>
+                    <a class="google-app" href="https://docs.google.com/spreadsheets/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon sheets-icon">S</span>
+                      <span>Sheets</span>
+                    </a>
+                    <a class="google-app" href="https://drive.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon drive-icon">D</span>
+                      <span>Drive</span>
+                    </a>
+                    <a class="google-app" href="https://gemini.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon gemini-icon">G</span>
+                      <span>Gemini</span>
+                    </a>
+                    <a class="google-app" href="https://maps.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon maps-icon">M</span>
+                      <span>Maps</span>
+                    </a>
+                    <a class="google-app" href="https://www.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon search-icon">G</span>
+                      <span>Search</span>
+                    </a>
+                    <a class="google-app" href="https://calendar.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon calendar-icon">31</span>
+                      <span>Calendar</span>
+                    </a>
+                    <a class="google-app" href="https://news.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon news-icon">N</span>
+                      <span>News</span>
+                    </a>
+                    <a class="google-app" href="https://photos.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon photos-icon">P</span>
+                      <span>Photos</span>
+                    </a>
+                    <a class="google-app" href="https://meet.google.com/" target="_blank" rel="noreferrer" role="menuitem">
+                      <span class="google-app-icon meet-icon">M</span>
+                      <span>Meet</span>
+                    </a>
+                  </div>
+                </div>
+              </div>
+              <div class="chrome-menu-shell">
+                <button class="chrome-profile-button" id="google-account-trigger" type="button" aria-label="Google account" aria-haspopup="true" aria-expanded="false" aria-controls="google-account-menu">
+                  <span aria-hidden="true">A</span>
+                </button>
+                <div class="chrome-popover chrome-account-popover" id="google-account-menu" role="menu" aria-labelledby="google-account-trigger" hidden>
+                  <button class="chrome-popover-close" type="button" data-close-google-menu aria-label="Close Google account menu">×</button>
+                  <div class="account-card">
+                    <span class="account-avatar" aria-hidden="true">A</span>
+                    <strong>Google account</strong>
+                    <small>Use Chrome's signed-in Google pages for account details.</small>
+                    <a class="manage-account" href="https://myaccount.google.com/" target="_blank" rel="noreferrer" role="menuitem">Manage your Google Account</a>
+                  </div>
+                  <div class="account-actions">
+                    <a href="https://accounts.google.com/AddSession" target="_blank" rel="noreferrer" role="menuitem">Add another account</a>
+                    <a href="https://accounts.google.com/Logout" target="_blank" rel="noreferrer" role="menuitem">Sign out of all accounts</a>
+                  </div>
+                  <div class="account-footer">
+                    <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">Privacy policy</a>
+                    <span aria-hidden="true">•</span>
+                    <a href="https://policies.google.com/terms" target="_blank" rel="noreferrer">Terms of Service</a>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </header>
 

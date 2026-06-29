@@ -96,6 +96,17 @@ async function run() {
   await dashboard.getByRole("heading", { name: "Plugin release checker" }).waitFor();
   await dashboard.getByRole("heading", { name: "Session health" }).waitFor();
   await dashboard.getByRole("heading", { name: "Developer updates" }).waitFor();
+  await dashboard.getByRole("link", { name: "Gmail", exact: true }).waitFor();
+  await dashboard.getByRole("link", { name: "Images", exact: true }).waitFor();
+  await dashboard.getByRole("button", { name: "Google apps" }).click();
+  await dashboard.getByRole("menuitem", { name: "Drive" }).waitFor();
+  await dashboard.getByRole("button", { name: "Google account" }).click();
+  await dashboard.getByRole("menuitem", { name: "Manage your Google Account" }).waitFor();
+  assert.equal(
+    await dashboard.locator("#process-ticket").count(),
+    0,
+    "The New Tab dashboard should use Google-style defaults instead of a Process current ticket button."
+  );
   await dashboard.locator("#weather-section").waitFor({ state: "visible" });
   await dashboard.locator("#weather-section").getByText("Cumilla", { exact: false }).waitFor({
     timeout: 30000

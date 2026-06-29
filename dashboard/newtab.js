@@ -51,8 +51,11 @@
     taskList: document.getElementById("task-list"),
     taskSummary: document.getElementById("task-summary"),
     syncState: document.getElementById("sync-state"),
-    processTicket: document.getElementById("process-ticket"),
     autosendToggle: document.getElementById("autosend-toggle"),
+    googleAppsTrigger: document.getElementById("google-apps-trigger"),
+    googleAppsMenu: document.getElementById("google-apps-menu"),
+    googleAccountTrigger: document.getElementById("google-account-trigger"),
+    googleAccountMenu: document.getElementById("google-account-menu"),
     preferencesSection: document.getElementById("preferences-section"),
     closePreferences: document.getElementById("close-preferences"),
     preferencesAutosendToggle: document.getElementById("preferences-autosend-toggle"),
@@ -134,9 +137,7 @@
       });
     }
 
-    elements.processTicket.addEventListener("click", () => {
-      void processCurrentTicket();
-    });
+    bindGoogleDefaultMenus();
 
     elements.autosendToggle.addEventListener("change", () => {
       void updateAutoSendSetting(elements.autosendToggle.checked);
@@ -242,6 +243,51 @@
       if (areaName === "local" && changes[DIRECTORY_WATCH_KEY]) {
         state.directoryWatch = changes[DIRECTORY_WATCH_KEY].newValue || {};
         renderReleaseCache(state.releaseCache);
+      }
+    });
+  }
+
+  function bindGoogleDefaultMenus() {
+    const menuPairs = [
+      [elements.googleAppsTrigger, elements.googleAppsMenu],
+      [elements.googleAccountTrigger, elements.googleAccountMenu]
+    ].filter(([trigger, menu]) => trigger && menu);
+
+    const closeMenus = () => {
+      for (const [trigger, menu] of menuPairs) {
+        trigger.setAttribute("aria-expanded", "false");
+        menu.hidden = true;
+      }
+    };
+
+    for (const [trigger, menu] of menuPairs) {
+      trigger.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const shouldOpen = menu.hidden;
+        closeMenus();
+        if (shouldOpen) {
+          trigger.setAttribute("aria-expanded", "true");
+          menu.hidden = false;
+        }
+      });
+      menu.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest("[data-close-google-menu]")) {
+          closeMenus();
+          return;
+        }
+        if (target?.closest("a")) {
+          closeMenus();
+          return;
+        }
+        event.stopPropagation();
+      });
+    }
+
+    document.addEventListener("click", closeMenus);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeMenus();
       }
     });
   }
@@ -878,34 +924,6 @@
     return row;
   }
 
-  async function processCurrentTicket() {
-    setButtonWorking(elements.processTicket, true, "Starting automation…");
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: "RPA_PROCESS_CURRENT_TICKET"
-      });
-
-      if (!response?.ok || !response.accepted) {
-        throw new Error(response?.error || "No support ticket could be processed.");
-      }
-
-      showToast(
-        response.source === "titan-mail"
-          ? "Titan email queued for drafting."
-          : "Fluent Support ticket queued for drafting.",
-        "success"
-      );
-      await loadActivity();
-    } catch (error) {
-      showToast(
-        getErrorMessage(error, "Open a support ticket or Titan email first."),
-        "error"
-      );
-    } finally {
-      setButtonWorking(elements.processTicket, false);
-    }
-  }
-
   async function loadActivity() {
     elements.activityList.replaceChildren(createLoadingRow("Loading recent automation…"));
 
@@ -951,7 +969,7 @@
       const placeholder = {
         status: "ready",
         title: "Support automation is ready",
-        detail: "Open a ticket, then select Process current ticket.",
+        detail: "Open a ticket, then use the support-page launcher or native side panel.",
         createdAt: Date.now()
       };
       elements.activityList.append(createActivityRow(placeholder));

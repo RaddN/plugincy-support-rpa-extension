@@ -370,6 +370,306 @@ html[data-sidebar="collapsed"] .sidebar-collapse {
   gap: 20px;
 }
 
+.chrome-defaults {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.chrome-link {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  text-decoration: none;
+}
+
+.chrome-link:hover {
+  text-decoration: underline;
+}
+
+.chrome-menu-shell {
+  position: relative;
+}
+
+.chrome-icon-button,
+.chrome-profile-button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.chrome-icon-button:hover,
+.chrome-profile-button:hover,
+.chrome-icon-button[aria-expanded="true"],
+.chrome-profile-button[aria-expanded="true"] {
+  background: var(--surface-hover);
+}
+
+.chrome-icon-button svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 4;
+}
+
+.chrome-profile-button {
+  padding: 3px;
+}
+
+.chrome-profile-button span,
+.account-avatar,
+.account-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #1a73e8, #34a853);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.chrome-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 40;
+  width: min(360px, calc(100vw - var(--sidebar-width) - 36px));
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: 0 22px 60px rgba(16, 34, 61, 0.22);
+}
+
+.chrome-apps-popover {
+  padding: 18px;
+}
+
+.chrome-account-popover {
+  padding: 24px 18px 18px;
+}
+
+.chrome-popover[hidden] {
+  display: none;
+}
+
+.chrome-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.chrome-popover-head strong {
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.chrome-popover-head a,
+.chrome-popover-close {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.chrome-popover-head a:hover,
+.chrome-popover-close:hover {
+  color: var(--text);
+}
+
+.chrome-popover-head svg {
+  width: 18px;
+  height: 18px;
+}
+
+.google-app-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  max-height: min(520px, calc(100vh - 150px));
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.google-app {
+  display: grid;
+  min-height: 92px;
+  justify-items: center;
+  gap: 9px;
+  align-content: center;
+  border-radius: 18px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  text-align: center;
+  text-decoration: none;
+}
+
+.google-app:hover {
+  background: var(--surface-hover);
+}
+
+.google-app-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 12px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 820;
+  letter-spacing: -0.02em;
+}
+
+.gmail-icon {
+  background: linear-gradient(135deg, #ea4335 0 40%, #fbbc05 40% 55%, #34a853 55% 72%, #4285f4 72%);
+}
+
+.docs-icon,
+.calendar-icon {
+  background: linear-gradient(135deg, #4285f4, #7baaf7);
+}
+
+.sheets-icon {
+  background: linear-gradient(135deg, #0f9d58, #34a853);
+}
+
+.drive-icon {
+  background: conic-gradient(from 35deg, #4285f4, #34a853, #fbbc05, #4285f4);
+}
+
+.gemini-icon {
+  background: conic-gradient(from 210deg, #4285f4, #a142f4, #ea4335, #fbbc05, #34a853, #4285f4);
+}
+
+.maps-icon {
+  background: linear-gradient(135deg, #34a853, #4285f4 48%, #ea4335);
+}
+
+.search-icon {
+  background: conic-gradient(from 45deg, #4285f4, #34a853, #fbbc05, #ea4335, #4285f4);
+}
+
+.news-icon {
+  background: linear-gradient(135deg, #4285f4, #34a853 48%, #fbbc05);
+}
+
+.photos-icon {
+  background: conic-gradient(from 45deg, #ea4335, #fbbc05, #34a853, #4285f4, #ea4335);
+}
+
+.meet-icon {
+  background: linear-gradient(135deg, #00ac47, #00832d 45%, #fbbc05 45% 64%, #4285f4 64%);
+}
+
+.chrome-popover-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.account-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 16px 8px 18px;
+  text-align: center;
+}
+
+.account-avatar {
+  width: 70px;
+  height: 70px;
+  font-size: 28px;
+}
+
+.account-card strong {
+  margin-top: 2px;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+.account-card small {
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.manage-account {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4px;
+  padding: 0 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--accent);
+  font-weight: 720;
+  text-decoration: none;
+}
+
+.manage-account:hover {
+  background: var(--accent-soft);
+}
+
+.account-actions {
+  display: grid;
+  overflow: hidden;
+  border-radius: 18px;
+  background: var(--surface-subtle);
+}
+
+.account-actions a {
+  padding: 15px 18px;
+  color: var(--text);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.account-actions a + a {
+  border-top: 1px solid var(--border);
+}
+
+.account-actions a:hover {
+  background: var(--surface-hover);
+}
+
+.account-footer {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 26px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.account-footer a:hover {
+  text-decoration: underline;
+}
+
 .autosend-control {
   display: grid;
   cursor: pointer;
@@ -1770,7 +2070,8 @@ html[data-sidebar="collapsed"] .sidebar-collapse {
   }
 
   .topbar {
-    position: static;
+    position: relative;
+    z-index: 60;
     min-height: auto;
     align-items: flex-start;
     padding-block: 18px;
@@ -1780,6 +2081,10 @@ html[data-sidebar="collapsed"] .sidebar-collapse {
     align-items: flex-end;
     flex-direction: column-reverse;
     gap: 10px;
+  }
+
+  .chrome-defaults {
+    justify-content: flex-end;
   }
 
   .primary-button {
@@ -1882,6 +2187,7 @@ html[data-sidebar="collapsed"] .sidebar-collapse {
   .topbar {
     display: grid;
     gap: 16px;
+    justify-content: stretch;
     padding: 18px;
   }
 
@@ -1892,6 +2198,21 @@ html[data-sidebar="collapsed"] .sidebar-collapse {
 
   .topbar-actions {
     align-items: stretch;
+    justify-self: stretch;
+  }
+
+  .chrome-defaults {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .chrome-menu-shell {
+    position: static;
+  }
+
+  .chrome-popover {
+    right: 0;
+    width: min(360px, calc(100vw - 36px));
   }
 
   .autosend-control {

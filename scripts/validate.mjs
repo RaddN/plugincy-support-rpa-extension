@@ -87,6 +87,16 @@ if (manifest.side_panel?.default_path !== "sidepanel/sidepanel.html") {
   throw new Error("The native side panel must point to sidepanel/sidepanel.html.");
 }
 
+const dashboardHtml = readFileSync(join(root, "dashboard/newtab.html"), "utf8");
+if (dashboardHtml.includes('id="process-ticket"')) {
+  throw new Error("dashboard/newtab.html must not render the removed Process current ticket button.");
+}
+for (const requiredDashboardText of ["Google apps", "Google account", "Gmail", "Images"]) {
+  if (!dashboardHtml.includes(requiredDashboardText)) {
+    throw new Error(`dashboard/newtab.html is missing the Chrome-default shortcut: ${requiredDashboardText}.`);
+  }
+}
+
 for (const file of [
   "background.js",
   "shared/workflow-core.js",
