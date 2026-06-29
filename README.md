@@ -1,13 +1,13 @@
 # Plugincy Support RPA
 
-A Manifest V3 Chrome extension for a WordPress/WooCommerce developer support workflow. It reads the open Fluent Support ticket or Titan email only after you click the support-page button, uses a logged-in `chatgpt.com` tab to draft a response, shows the result in a copy-ready support sidebar, and escalates sensitive or runtime-only work into a synced task list.
+A Manifest V3 Chrome extension for a WordPress/WooCommerce developer support workflow. It reads the exact open Fluent Support ticket or Titan email only after you click, uses a logged-in `chatgpt.com` tab to draft a response, saves every result in a local Draft Inbox, and escalates sensitive or runtime-only work into a local task list.
 
 No API key is used. The extension operates through page DOM content scripts in your own logged-in browser session.
 
 ## What is included
 
 - Professional New Tab workbench with:
-  - To-do items stored as separate `chrome.storage.sync` records to stay within per-item sync quotas.
+  - Detailed tasks, drafts, ticket context, and product resources stored in `chrome.storage.local`; only compact preferences sync.
   - Add, complete, reprioritize, filter, and delete actions.
   - Up to 12 WordPress and WooCommerce developer RSS updates with a short-summary share action (or clipboard fallback).
   - A WordPress.org checker for the three Plugincy plugins, with a 30-day release deadline, active installs, ratings, support totals, and recent new support/rating activity.
@@ -22,10 +22,10 @@ No API key is used. The extension operates through page DOM content scripts in y
   - `https://hostinger.titan.email/mail/`
 - ChatGPT DOM controller with a serialized job queue and completion `MutationObserver`.
 - Product repositories, documentation, landing pages, and other configured URLs are analysis references. The prompt uses them to verify code and product behavior; it does not automatically expose them as customer-facing quick links.
-- Local credential detection. Tickets containing likely usernames/passwords or WordPress admin access details are not sent to ChatGPT.
-- AI escalation handling. `ESCALATE_TO_HUMAN: ...` results become high-priority synced tasks instead of replies.
-- Manual copy-only drafts. No reply is pasted or sent automatically.
-- Extension-toolbar To-Do overlay that works from normal web tabs.
+- Secret detection for credentials, API tokens, license keys, authorization headers, basic-auth URLs, database/hosting access, and private keys. Subject and full conversation are scanned before truncation.
+- AI escalation handling. `ESCALATE_TO_HUMAN: ...` results become high-priority local tasks instead of replies.
+- Persistent native Chrome side panel with Draft Inbox, editable replies, copy/retry/delete actions, ticket links, and local tasks.
+- Professional auto-reply is opt-in and off by default. It revalidates the same open ticket, waits through a safety delay, and keeps the draft when insertion or sending cannot be confirmed safely.
 - Persistent-profile Playwright smoke test.
 
 ## Install the unpacked extension
@@ -45,9 +45,9 @@ The extension creates and reuses its own pinned ChatGPT tab during ticket proces
 ## Daily workflow
 
 1. Open a Fluent Support ticket or Titan email.
-2. Select **Generate GPT reply** in the support-page launcher/sidebar, or open a new tab and select **Process current ticket**.
-3. Leave the pinned ChatGPT tab available while the response is generated.
-4. Copy the sidebar draft, paste it into the support reply editor, review, and send manually.
+2. Select **Generate GPT reply** in the compact support-page launcher, or use **Process ticket** in the native side panel.
+3. ChatGPT opens in its real browser tab so you can review, edit, or continue prompting there.
+4. The completed result is saved in **Draft Inbox**. Copy/edit it there, or enable professional auto-reply in preferences.
 
 If temporary WordPress credentials are detected, the ticket is escalated locally and no ticket text is sent to ChatGPT. `ESCALATE_TO_HUMAN: ...` is reserved for tickets where a safe customer-facing draft cannot be produced because sensitive access details are already present, immediate internal/manual action is required, or another genuine safety boundary applies.
 
@@ -60,11 +60,11 @@ Brief or incomplete reports are not escalated by default. The generated reply as
 - Release metadata is read from the official WordPress.org Plugins API every six hours and on manual refresh. Each monitored plugin is due 30 days after its reported `last_updated` value.
 - Selecting a desktop notification focuses an existing matching tab or opens the target in a new tab.
 
-## Manual-copy safety
+## Draft and auto-reply safety
 
 Automatic ticket drafting on visit is disabled. Opening a Titan email or Fluent Support ticket no longer sends anything to ChatGPT.
 
-Replies are copy-only. The support content script does not paste into the reply editor and does not click Send.
+Auto-reply remains off until explicitly enabled. When enabled, the support content script verifies that the ticket signature is unchanged before and after opening the editor, waits through the configured safety delay, and only clicks a uniquely identified reply submit button. Any mismatch or missing selector stops sending and preserves the saved draft.
 
 ## Install test dependencies
 
@@ -94,7 +94,7 @@ The test:
 3. Loads only this unpacked extension with `--disable-extensions-except` and `--load-extension`.
 4. Opens `chrome://newtab/` and verifies the dashboard override.
 5. Finds the MV3 service worker and extension ID.
-6. Adds, completes, and deletes a temporary synced task.
+6. Adds, completes, and deletes a temporary local task.
 7. Verifies the default product library records and custom reference-link CRUD.
 8. Verifies the plugin release checker is present.
 9. Opens `chatgpt.com` and reports whether the prompt composer is visible.
@@ -128,9 +128,10 @@ That fallback remains persistent between test runs; it is not a clean or disposa
 ```powershell
 npm run validate
 npm run test:unit
+npm run test:workflow
 ```
 
-Validation checks the manifest contract, required files, requested permissions/hosts, New Tab override, service worker entry, and JavaScript syntax. The unit test verifies that product links are analysis references and that incomplete tickets request details/access instead of escalating automatically.
+Validation checks the manifest contract, side-panel configuration, required files, permissions/hosts, New Tab override, service worker entry, and JavaScript syntax. Workflow tests cover the supplied Fluent Support and Titan exports, secret blocking, triage, duplicate signatures, timeout recovery, auto-reply insertion, and the ChatGPT fresh-conversation guard.
 
 ## Security boundaries
 
@@ -139,8 +140,8 @@ Validation checks the manifest contract, required files, requested permissions/h
 - Dynamic RSS and ticket text are rendered with `textContent`, not HTML.
 - Source notifications store only local hashed unread-item fingerprints; ticket and email body content is not copied into notification state.
 - No external scripts, CDNs, analytics, API keys, or remote code are used.
-- Job state is held in `chrome.storage.session`; task data uses `chrome.storage.sync`; activity/news/release/forum notification state uses `chrome.storage.local`.
-- Ticket automation is accepted only from the configured Hostinger and Plugincy support origins.
+- Queue state, detailed tasks, drafts, and ticket/customer context stay in `chrome.storage.local`. Only preferences use `chrome.storage.sync`.
+- Fluent Support capture is accepted only on `admin.php?page=fluent-support#/tickets/<id>/view`; other WordPress admin routes cannot be processed.
 
 ## Expected maintenance
 

@@ -7,11 +7,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const requiredFiles = [
   "manifest.json",
   "background.js",
+  "shared/workflow-core.js",
   "content/scraper.js",
-  "content/todo-overlay.js",
   "content/source-notifier.js",
   "content/prompt-builder.js",
   "content/gpt-controller.js",
+  "sidepanel/sidepanel.html",
+  "sidepanel/sidepanel.css",
+  "sidepanel/sidepanel.js",
   "dashboard/newtab.html",
   "dashboard/newtab.css",
   "dashboard/newtab.js",
@@ -20,6 +23,8 @@ const requiredFiles = [
   "assets/icons/icon-32.png",
   "assets/icons/icon-48.png",
   "assets/icons/icon-128.png",
+  "test-workflow.js",
+  "test-workflow-browser.js",
   "test-extension.js"
 ];
 
@@ -35,12 +40,13 @@ const expectedPermissions = [
   "storage",
   "scripting",
   "alarms",
-  "notifications"
+  "notifications",
+  "sidePanel"
 ];
 const expectedHosts = [
   "https://chatgpt.com/*",
   "https://hostinger.titan.email/*",
-  "https://plugincy.com/*",
+  "https://plugincy.com/wp-admin/admin.php*",
   "https://wordpress.org/*",
   "https://api.wordpress.org/*",
   "https://api.open-meteo.com/*",
@@ -77,15 +83,22 @@ if (manifest.chrome_url_overrides?.newtab !== "dashboard/newtab.html") {
   throw new Error("The New Tab override must point to dashboard/newtab.html.");
 }
 
+if (manifest.side_panel?.default_path !== "sidepanel/sidepanel.html") {
+  throw new Error("The native side panel must point to sidepanel/sidepanel.html.");
+}
+
 for (const file of [
   "background.js",
+  "shared/workflow-core.js",
   "content/scraper.js",
-  "content/todo-overlay.js",
   "content/source-notifier.js",
   "content/prompt-builder.js",
   "content/gpt-controller.js",
+  "sidepanel/sidepanel.js",
   "dashboard/newtab.js",
   "test-prompt-builder.js",
+  "test-workflow.js",
+  "test-workflow-browser.js",
   "test-extension.js"
 ]) {
   execFileSync(process.execPath, ["--check", join(root, file)], {

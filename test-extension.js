@@ -96,8 +96,8 @@ async function run() {
   await dashboard.getByRole("heading", { name: "Plugin release checker" }).waitFor();
   await dashboard.getByRole("heading", { name: "Session health" }).waitFor();
   await dashboard.getByRole("heading", { name: "Developer updates" }).waitFor();
-  await dashboard.locator("#weather-summary").waitFor({ state: "visible" });
-  await dashboard.locator("#weather-summary").getByText("Cumilla", { exact: false }).waitFor({
+  await dashboard.locator("#weather-section").waitFor({ state: "visible" });
+  await dashboard.locator("#weather-section").getByText("Cumilla", { exact: false }).waitFor({
     timeout: 30000
   });
   await dashboard.locator(".release-row").first().waitFor({ state: "visible" });
@@ -173,45 +173,11 @@ async function run() {
   await smokeRow.getByRole("button", { name: `Delete ${smokeTask}` }).click();
   await smokeRow.waitFor({ state: "detached" });
 
-  const todoPage = await context.newPage();
-  await todoPage.goto("https://plugincy.com/", {
-    waitUntil: "domcontentloaded",
-    timeout: 60000
-  });
-  const overlayResult = await serviceWorker.evaluate(async () => {
-    const tabs = await chrome.tabs.query({ url: "https://plugincy.com/*" });
-    if (!tabs[0]?.id) {
-      return {
-        ok: false,
-        error: "No plugincy.com tab found for To-Do overlay smoke test."
-      };
-    }
-
-    await chrome.scripting.executeScript({
-      target: { tabId: tabs[0].id },
-      files: ["content/todo-overlay.js"]
-    });
-    const response = await chrome.tabs.sendMessage(tabs[0].id, {
-      type: "RPA_TODO_TOGGLE"
-    });
-
-    return {
-      ok: true,
-      response
-    };
-  });
-  assert.equal(overlayResult.ok, true, JSON.stringify(overlayResult));
-  await todoPage.locator("#plugincy-todo-overlay-host").waitFor({
-    state: "attached",
-    timeout: 10000
-  });
-  assert.equal(
-    await todoPage
-      .locator("#plugincy-todo-overlay-host")
-      .evaluate((host) => host.dataset.open),
-    "true",
-    "The To-Do overlay should open on a normal web tab."
-  );
+  const sidePanel = await context.newPage();
+  await sidePanel.goto(`chrome-extension://${extensionId}/sidepanel/sidepanel.html`);
+  await sidePanel.getByRole("heading", { name: "Draft Inbox" }).waitFor();
+  await sidePanel.getByRole("heading", { name: "Workspace" }).waitFor();
+  await sidePanel.getByRole("button", { name: "Process ticket" }).waitFor();
 
   await dashboard.screenshot({
     path: screenshotPath,
@@ -233,12 +199,12 @@ async function run() {
 
   console.log(`Extension ID: ${extensionId}`);
   console.log("New Tab override: PASS");
-  console.log("Synced task add/complete/delete: PASS");
+  console.log("Local task add/complete/delete: PASS");
   console.log("Product library add/reference-links/delete: PASS");
   console.log("WordPress.org release checker: PASS");
-  console.log("Manual support drafting default: PASS");
+  console.log("Native side panel and Draft Inbox: PASS");
   console.log("Weather/rain-risk summary: PASS");
-  console.log("Any-tab To-Do overlay: PASS");
+  console.log("Persistent side-panel workspace: PASS");
   console.log(`ChatGPT opened: PASS (${composerVisible ? "composer detected" : "sign-in/UI check needed"})`);
   console.log(`Dashboard screenshot: ${screenshotPath}`);
 

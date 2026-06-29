@@ -26,6 +26,8 @@
     settings: {
       autoSendReplies: false,
       autoProcessTickets: false,
+      autoSendDelaySeconds: 8,
+      sidebarCollapsed: false,
       theme: "light"
     }
   };
@@ -36,7 +38,12 @@
     currentDay: document.getElementById("current-day"),
     pageTitle: document.getElementById("page-title"),
     reviewStateCopy: document.getElementById("review-state-copy"),
-    weatherSummary: document.getElementById("weather-summary"),
+    weatherSection: document.getElementById("weather-section"),
+    weatherTitle: document.getElementById("weather-title"),
+    weatherCondition: document.getElementById("weather-condition"),
+    weatherTemperature: document.getElementById("weather-temperature"),
+    weatherRain: document.getElementById("weather-rain"),
+    refreshWeather: document.getElementById("refresh-weather"),
     taskForm: document.getElementById("task-form"),
     taskTitle: document.getElementById("task-title"),
     taskDetails: document.getElementById("task-details"),
@@ -51,6 +58,7 @@
     preferencesAutosendToggle: document.getElementById("preferences-autosend-toggle"),
     autosendHelper: document.getElementById("autosend-helper"),
     themeToggle: document.getElementById("theme-toggle"),
+    sidebarCollapse: document.getElementById("sidebar-collapse"),
     focusSettings: document.getElementById("focus-settings"),
     productForm: document.getElementById("product-form"),
     productId: document.getElementById("product-id"),
@@ -104,7 +112,7 @@
         type: "RPA_ENSURE_DEFAULT_PRODUCTS"
       });
     } catch {
-      // Product loading below will still render any existing synced records.
+      // Product loading below will still render any existing local records.
     }
   }
 
@@ -128,6 +136,20 @@
 
     elements.processTicket.addEventListener("click", () => {
       void processCurrentTicket();
+    });
+
+    elements.autosendToggle.addEventListener("change", () => {
+      void updateAutoSendSetting(elements.autosendToggle.checked);
+    });
+
+    elements.preferencesAutosendToggle.addEventListener("change", () => {
+      void updateAutoSendSetting(elements.preferencesAutosendToggle.checked);
+    });
+
+    elements.sidebarCollapse.addEventListener("click", () => {
+      state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
+      applySettingsToUi();
+      void saveSettings({ quiet: true });
     });
 
     elements.themeToggle.addEventListener("click", () => {
@@ -174,9 +196,13 @@
       void loadSessionHealth();
     });
 
+    elements.refreshWeather.addEventListener("click", () => {
+      void loadWeather({ force: true });
+    });
+
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (
-        areaName === "sync" &&
+        areaName === "local" &&
         Object.keys(changes).some(
           (key) => key === TASK_INDEX_KEY || key.startsWith(TASK_KEY_PREFIX)
         )
@@ -185,7 +211,7 @@
       }
 
       if (
-        areaName === "sync" &&
+        areaName === "local" &&
         Object.keys(changes).some(
           (key) => key === PRODUCT_INDEX_KEY || key.startsWith(PRODUCT_KEY_PREFIX)
         )
@@ -241,25 +267,34 @@
     const stored = result[SETTINGS_KEY];
     if (stored && typeof stored === "object") {
       state.settings = {
-        autoSendReplies: false,
+        autoSendReplies: stored.autoSendReplies === true,
         autoProcessTickets: false,
+        autoSendDelaySeconds: Math.min(
+          30,
+          Math.max(3, Number(stored.autoSendDelaySeconds || 8))
+        ),
+        sidebarCollapsed: stored.sidebarCollapsed === true,
         theme: stored.theme === "dark" ? "dark" : "light"
       };
     }
     applySettingsToUi();
   }
 
-  async function saveSettings() {
+  async function saveSettings({ quiet = false } = {}) {
     setSyncWorking(true);
     try {
       await chrome.storage.sync.set({
         [SETTINGS_KEY]: {
-          autoSendReplies: false,
+          autoSendReplies: state.settings.autoSendReplies,
           autoProcessTickets: false,
+          autoSendDelaySeconds: state.settings.autoSendDelaySeconds,
+          sidebarCollapsed: state.settings.sidebarCollapsed,
           theme: state.settings.theme
         }
       });
-      showToast("Preferences synced across Chrome.", "success");
+      if (!quiet) {
+        showToast("Preferences synced across Chrome.", "success");
+      }
     } catch (error) {
       showToast(getErrorMessage(error, "Preferences could not be saved."), "error");
     } finally {
@@ -274,8 +309,40 @@
     elements.autosendToggle.checked = state.settings.autoSendReplies;
     elements.preferencesAutosendToggle.checked = state.settings.autoSendReplies;
 
-    elements.autosendHelper.textContent = "Nothing is sent automatically";
-    elements.reviewStateCopy.textContent = "Manual draft, review before send";
+    document.documentElement.dataset.sidebar = state.settings.sidebarCollapsed
+      ? "collapsed"
+      : "expanded";
+    elements.sidebarCollapse.setAttribute(
+      "aria-expanded",
+      String(!state.settings.sidebarCollapsed)
+    );
+    elements.sidebarCollapse.setAttribute(
+      "aria-label",
+      state.settings.sidebarCollapsed ? "Expand navigation" : "Collapse navigation"
+    );
+    elements.autosendHelper.textContent = state.settings.autoSendReplies
+      ? `Enabled with a ${state.settings.autoSendDelaySeconds}-second safety delay`
+      : "Off — drafts are saved for review";
+    elements.reviewStateCopy.textContent = state.settings.autoSendReplies
+      ? "Auto-reply enabled with ticket revalidation"
+      : "Manual draft, review before send";
+  }
+
+  async function updateAutoSendSetting(enabled) {
+    if (
+      enabled &&
+      !window.confirm(
+        "Enable automatic sending? The extension will revalidate the same open ticket, wait through the safety delay, and only then click the reply button. Any mismatch keeps the draft for review."
+      )
+    ) {
+      elements.autosendToggle.checked = false;
+      elements.preferencesAutosendToggle.checked = false;
+      return;
+    }
+
+    state.settings.autoSendReplies = enabled;
+    applySettingsToUi();
+    await saveSettings();
   }
 
   function openPreferences() {
@@ -291,7 +358,7 @@
   async function loadTasks() {
     setSyncWorking(true);
     try {
-      const data = await chrome.storage.sync.get(null);
+      const data = await chrome.storage.local.get(null);
       const index = Array.isArray(data[TASK_INDEX_KEY])
         ? data[TASK_INDEX_KEY].filter((id) => typeof id === "string")
         : [];
@@ -340,7 +407,7 @@
 
     setSyncWorking(true);
     try {
-      const result = await chrome.storage.sync.get(TASK_INDEX_KEY);
+      const result = await chrome.storage.local.get(TASK_INDEX_KEY);
       const currentIndex = Array.isArray(result[TASK_INDEX_KEY])
         ? result[TASK_INDEX_KEY].filter((id) => typeof id === "string")
         : [];
@@ -349,14 +416,14 @@
         MAX_TASKS
       );
 
-      await chrome.storage.sync.set({
+      await chrome.storage.local.set({
         [TASK_INDEX_KEY]: nextIndex,
         [`${TASK_KEY_PREFIX}${task.id}`]: task
       });
 
       const removed = currentIndex.filter((id) => !nextIndex.includes(id));
       if (removed.length) {
-        await chrome.storage.sync.remove(
+        await chrome.storage.local.remove(
           removed.map((id) => `${TASK_KEY_PREFIX}${id}`)
         );
       }
@@ -364,7 +431,7 @@
       elements.taskForm.reset();
       elements.taskPriority.value = "medium";
       elements.taskTitle.focus();
-      showToast("Task added to your synced work list.", "success");
+      showToast("Task added to your local work list.", "success");
       await loadTasks();
     } catch (error) {
       showToast(getErrorMessage(error, "The task could not be added."), "error");
@@ -381,7 +448,7 @@
 
     setSyncWorking(true);
     try {
-      await chrome.storage.sync.set({
+      await chrome.storage.local.set({
         [`${TASK_KEY_PREFIX}${task.id}`]: updated
       });
       state.tasks = state.tasks.map((item) => (item.id === task.id ? updated : item));
@@ -396,16 +463,16 @@
   async function deleteTask(task) {
     setSyncWorking(true);
     try {
-      const result = await chrome.storage.sync.get(TASK_INDEX_KEY);
+      const result = await chrome.storage.local.get(TASK_INDEX_KEY);
       const currentIndex = Array.isArray(result[TASK_INDEX_KEY])
         ? result[TASK_INDEX_KEY]
         : [];
 
       await Promise.all([
-        chrome.storage.sync.set({
+        chrome.storage.local.set({
           [TASK_INDEX_KEY]: currentIndex.filter((id) => id !== task.id)
         }),
-        chrome.storage.sync.remove(`${TASK_KEY_PREFIX}${task.id}`)
+        chrome.storage.local.remove(`${TASK_KEY_PREFIX}${task.id}`)
       ]);
 
       state.tasks = state.tasks.filter((item) => item.id !== task.id);
@@ -421,7 +488,7 @@
   async function loadProducts() {
     setSyncWorking(true);
     try {
-      const data = await chrome.storage.sync.get(null);
+      const data = await chrome.storage.local.get(null);
       const index = Array.isArray(data[PRODUCT_INDEX_KEY])
         ? data[PRODUCT_INDEX_KEY].filter((id) => typeof id === "string")
         : [];
@@ -499,7 +566,7 @@
 
     setSyncWorking(true);
     try {
-      const result = await chrome.storage.sync.get(PRODUCT_INDEX_KEY);
+      const result = await chrome.storage.local.get(PRODUCT_INDEX_KEY);
       const currentIndex = Array.isArray(result[PRODUCT_INDEX_KEY])
         ? result[PRODUCT_INDEX_KEY].filter((id) => typeof id === "string")
         : [];
@@ -508,20 +575,20 @@
         MAX_PRODUCTS
       );
 
-      await chrome.storage.sync.set({
+      await chrome.storage.local.set({
         [PRODUCT_INDEX_KEY]: nextIndex,
         [`${PRODUCT_KEY_PREFIX}${product.id}`]: product
       });
 
       const removed = currentIndex.filter((id) => !nextIndex.includes(id));
       if (removed.length) {
-        await chrome.storage.sync.remove(
+        await chrome.storage.local.remove(
           removed.map((id) => `${PRODUCT_KEY_PREFIX}${id}`)
         );
       }
 
       resetProductForm();
-      showToast("Product resources saved and synced.", "success");
+      showToast("Product resources saved locally.", "success");
       await loadProducts();
     } catch (error) {
       showToast(getErrorMessage(error, "Product resources could not be saved."), "error");
@@ -533,16 +600,16 @@
   async function deleteProduct(product) {
     setSyncWorking(true);
     try {
-      const result = await chrome.storage.sync.get(PRODUCT_INDEX_KEY);
+      const result = await chrome.storage.local.get(PRODUCT_INDEX_KEY);
       const currentIndex = Array.isArray(result[PRODUCT_INDEX_KEY])
         ? result[PRODUCT_INDEX_KEY]
         : [];
 
       await Promise.all([
-        chrome.storage.sync.set({
+        chrome.storage.local.set({
           [PRODUCT_INDEX_KEY]: currentIndex.filter((id) => id !== product.id)
         }),
-        chrome.storage.sync.remove(`${PRODUCT_KEY_PREFIX}${product.id}`)
+        chrome.storage.local.remove(`${PRODUCT_KEY_PREFIX}${product.id}`)
       ]);
 
       if (elements.productId.value === product.id) {
@@ -1413,11 +1480,13 @@
   }
 
   async function loadWeather({ force = false } = {}) {
-    if (!elements.weatherSummary) {
+    if (!elements.weatherSection) {
       return;
     }
 
-    elements.weatherSummary.textContent = "Weather loading...";
+    elements.weatherCondition.textContent = "Weather loading...";
+    elements.weatherRain.textContent = "Checking rain probability...";
+    setIconButtonWorking(elements.refreshWeather, true);
 
     try {
       if (force) {
@@ -1447,15 +1516,19 @@
 
       renderWeather(cache);
     } catch (error) {
-      elements.weatherSummary.textContent = getErrorMessage(
+      elements.weatherCondition.textContent = getErrorMessage(
         error,
         "Weather unavailable."
       );
+      elements.weatherTemperature.textContent = "--°";
+      elements.weatherRain.textContent = "Forecast unavailable";
+    } finally {
+      setIconButtonWorking(elements.refreshWeather, false);
     }
   }
 
   function renderWeather(cache) {
-    if (!elements.weatherSummary) {
+    if (!elements.weatherSection) {
       return;
     }
 
@@ -1477,8 +1550,32 @@
           .join(", ")}`
       : "No >40% rain expected";
 
-    elements.weatherSummary.textContent = `${location} ${temperatureText} · ${rainText}`;
-    elements.weatherSummary.title = "Shows forecast dates where rain probability is above 40%.";
+    elements.weatherTitle.textContent = location;
+    elements.weatherTemperature.textContent = temperatureText;
+    elements.weatherCondition.textContent = weatherCodeLabel(cache?.current?.weatherCode);
+    elements.weatherRain.textContent = rainText;
+    elements.weatherSection.title =
+      "Shows forecast dates where rain probability is above 40%.";
+  }
+
+  function weatherCodeLabel(value) {
+    const code = Number(value || 0);
+    if (code === 0) {
+      return "Clear sky";
+    }
+    if (code <= 3) {
+      return "Partly cloudy";
+    }
+    if ([45, 48].includes(code)) {
+      return "Foggy";
+    }
+    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
+      return "Rain expected";
+    }
+    if (code >= 95) {
+      return "Thunderstorms possible";
+    }
+    return "Forecast updated";
   }
 
   function formatWeatherDate(value) {
@@ -1532,7 +1629,7 @@
 
   function setSyncWorking(working) {
     elements.syncState.classList.toggle("is-working", working);
-    elements.syncState.lastChild.textContent = working ? " Syncing…" : " Synced";
+    elements.syncState.lastChild.textContent = working ? " Saving..." : " Local";
   }
 
   function setIconButtonWorking(button, working) {

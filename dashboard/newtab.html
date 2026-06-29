@@ -15,6 +15,7 @@
         <div class="brand">
           <img class="brand-logo" src="../brand_logo.png" alt="Plugincy">
           <span class="brand-product">Workbench</span>
+          <button class="sidebar-collapse" id="sidebar-collapse" type="button" aria-label="Collapse navigation" aria-expanded="true">‹</button>
         </div>
 
         <nav class="primary-nav" aria-label="Primary">
@@ -83,10 +84,10 @@
           <div class="topbar-actions">
             <label class="autosend-control" id="settings-panel">
               <span>
-                <strong>Manual copy mode</strong>
-                <small id="autosend-helper">Nothing is sent automatically</small>
+                <strong>Professional auto-reply</strong>
+                <small id="autosend-helper">Off — drafts are saved for review</small>
               </span>
-              <input id="autosend-toggle" type="checkbox" disabled>
+              <input id="autosend-toggle" type="checkbox">
               <span class="switch" aria-hidden="true"></span>
             </label>
             <button class="primary-button" id="process-ticket" type="button">
@@ -109,6 +110,21 @@
               </p>
             </section>
 
+            <section class="weather-section" id="weather-section" aria-labelledby="weather-title">
+              <div class="weather-icon" aria-hidden="true">☔</div>
+              <div class="weather-current">
+                <span class="weather-label">Local weather</span>
+                <h2 id="weather-title">Police Line, Cumilla</h2>
+                <p id="weather-condition">Weather loading...</p>
+              </div>
+              <div class="weather-temperature" id="weather-temperature">--°</div>
+              <div class="weather-forecast">
+                <span>Umbrella outlook</span>
+                <strong id="weather-rain">Checking rain probability...</strong>
+              </div>
+              <button class="icon-button weather-refresh" id="refresh-weather" type="button" aria-label="Refresh weather">↻</button>
+            </section>
+
             <section class="preferences-section" id="preferences-section" aria-labelledby="preferences-title" hidden>
               <div class="section-heading">
                 <div>
@@ -129,10 +145,10 @@
 
                 <label class="preference-card">
                   <span>
-                    <strong>Manual copy only</strong>
-                    <small>ChatGPT replies stay in the support sidebar. Copy and paste manually after review.</small>
+                    <strong>Professional auto-reply</strong>
+                    <small>When enabled, the same open ticket is revalidated before the reply is inserted and sent. Failed validation keeps the draft.</small>
                   </span>
-                  <input id="preferences-autosend-toggle" type="checkbox" disabled>
+                  <input id="preferences-autosend-toggle" type="checkbox">
                   <span class="switch" aria-hidden="true"></span>
                 </label>
               </div>
@@ -142,7 +158,7 @@
                 <div class="product-form-head">
                   <div>
                     <h3>Product/plugin library</h3>
-                    <p>These records sync with Chrome and are matched against ticket text. Links are analysis references for checking code, documentation, released behavior, and product context—not automatic links for customer replies.</p>
+                    <p>These records stay on this browser and are matched against ticket text. Links are analysis references for checking code, documentation, released behavior, and product context—not automatic links for customer replies.</p>
                   </div>
                   <div class="product-actions">
                     <button class="secondary-primary-button" id="product-save" type="submit">Save product</button>
@@ -221,7 +237,7 @@
                     <path d="M20 7a8 8 0 0 0-14-2M4 17h5v5"/>
                     <path d="M4 17a8 8 0 0 0 14 2"/>
                   </svg>
-                  Synced
+                  Local
                 </span>
               </div>
 

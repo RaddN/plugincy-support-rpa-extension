@@ -104,7 +104,7 @@
   }
 
   async function prepareFreshConversation() {
-    const hasConversation = getAssistantElements().length > 0;
+    const hasConversation = getConversationElementCount() > 0;
     if (!hasConversation) {
       return;
     }
@@ -117,14 +117,21 @@
     ]);
 
     if (!newChatButton) {
-      return;
+      throw new Error(
+        "A fresh ChatGPT conversation could not be confirmed. Start a new chat and retry; this ticket was not added to the existing conversation."
+      );
     }
 
     newChatButton.click();
-    await waitFor(() => {
+    const freshComposer = await waitFor(() => {
       const composer = findPromptComposer();
-      return composer && getAssistantElements().length === 0 ? composer : null;
+      return composer && getConversationElementCount() === 0 ? composer : null;
     }, 10000);
+    if (!freshComposer) {
+      throw new Error(
+        "ChatGPT did not confirm a new empty conversation. This ticket was stopped to prevent cross-customer context."
+      );
+    }
   }
 
   async function injectAndSubmitPrompt(composer, prompt) {
@@ -318,6 +325,11 @@
     ].filter(isVisible);
   }
 
+  function getConversationElementCount() {
+    const explicit = document.querySelectorAll("[data-message-author-role]").length;
+    return explicit || document.querySelectorAll("article[data-testid^='conversation-turn-']").length;
+  }
+
   function extractAssistantText(element) {
     if (!(element instanceof HTMLElement)) {
       return "";
@@ -406,4 +418,10 @@
   function delay(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
+
+  globalThis.PlugincyGptControllerTest = {
+    getAssistantSnapshot,
+    prepareFreshConversation,
+    waitForCompletedResponse
+  };
 })();

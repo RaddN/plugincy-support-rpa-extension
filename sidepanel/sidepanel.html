@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Plugincy Support Workspace</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <span class="eyebrow">Plugincy Support</span>
+        <h1>Workspace</h1>
+      </div>
+      <button class="icon-button" id="open-dashboard" type="button" aria-label="Open dashboard">↗</button>
+    </header>
+
+    <section class="automation-card" aria-labelledby="automation-title">
+      <div>
+        <span class="status-dot" id="queue-dot"></span>
+        <div>
+          <strong id="automation-title">Ready</strong>
+          <small id="queue-status">No active draft</small>
+        </div>
+      </div>
+      <div class="automation-actions">
+        <button class="primary-button" id="process-ticket" type="button">Process ticket</button>
+        <button class="secondary-button" id="open-chatgpt" type="button">Open ChatGPT</button>
+      </div>
+    </section>
+
+    <label class="autosend-card">
+      <span>
+        <strong>Professional auto-reply</strong>
+        <small id="autosend-copy">Off — drafts stay in Draft Inbox for review.</small>
+      </span>
+      <input id="autosend-toggle" type="checkbox">
+      <span class="switch" aria-hidden="true"></span>
+    </label>
+
+    <nav class="tabs" aria-label="Workspace sections">
+      <button class="tab is-active" type="button" data-tab="drafts" aria-pressed="true">
+        Draft Inbox <span id="draft-count">0</span>
+      </button>
+      <button class="tab" type="button" data-tab="tasks" aria-pressed="false">
+        Tasks <span id="task-count">0</span>
+      </button>
+    </nav>
+
+    <main>
+      <section class="panel is-active" id="drafts-panel" data-panel="drafts">
+        <div class="panel-toolbar">
+          <div>
+            <h2>Draft Inbox</h2>
+            <p>Saved locally with ticket context and recovery actions.</p>
+          </div>
+          <button class="text-button" id="refresh-drafts" type="button">Refresh</button>
+        </div>
+        <div class="record-list" id="draft-list" aria-live="polite"></div>
+      </section>
+
+      <section class="panel" id="tasks-panel" data-panel="tasks" hidden>
+        <div class="panel-toolbar">
+          <div>
+            <h2>Task planner</h2>
+            <p>Detailed work stays on this browser.</p>
+          </div>
+        </div>
+        <form class="task-form" id="task-form">
+          <input id="task-title" type="text" maxlength="160" placeholder="Task title" required>
+          <textarea id="task-notes" rows="3" placeholder="Details, subtasks, or customer context"></textarea>
+          <div class="task-form-row">
+            <select id="task-priority" aria-label="Priority">
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="low">Low</option>
+            </select>
+            <input id="task-due" type="datetime-local" aria-label="Due date and time">
+          </div>
+          <button class="primary-button" type="submit">Add task</button>
+        </form>
+        <input class="search-input" id="task-search" type="search" placeholder="Search tasks">
+        <div class="record-list" id="task-list" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

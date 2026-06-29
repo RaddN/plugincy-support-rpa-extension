@@ -1,11 +1,16 @@
 "use strict";
 
+importScripts("shared/workflow-core.js");
+
 const JOB_STATE_KEY = "rpa_job_state";
 const SETTINGS_KEY = "rpa_settings";
 const TASK_INDEX_KEY = "rpa_task_index";
 const TASK_KEY_PREFIX = "rpa_task_";
 const PRODUCT_INDEX_KEY = "rpa_product_index";
 const PRODUCT_KEY_PREFIX = "rpa_product_";
+const DRAFT_INDEX_KEY = "rpa_draft_index";
+const DRAFT_KEY_PREFIX = "rpa_draft_";
+const LOCAL_STORAGE_MIGRATED_KEY = "rpa_local_storage_migrated_v1";
 const DEFAULT_PRODUCTS_SEEDED_KEY = "rpa_default_products_seeded_v1";
 const ACTIVITY_KEY = "rpa_activity";
 const NEWS_CACHE_KEY = "rpa_news_cache";
@@ -18,6 +23,7 @@ const GPT_TAB_ID_KEY = "rpa_gpt_tab_id";
 
 const MAX_QUEUE_SIZE = 20;
 const MAX_TASKS = 80;
+const MAX_DRAFTS = 60;
 const MAX_PRODUCTS = 150;
 const MAX_PRODUCT_LINKS = 30;
 const MAX_ACTIVITY_ITEMS = 30;
@@ -39,6 +45,8 @@ const WEATHER_CACHE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 const DEFAULT_SETTINGS = {
   autoSendReplies: false,
   autoProcessTickets: false,
+  autoSendDelaySeconds: 8,
+  sidebarCollapsed: false,
   theme: "light"
 };
 
@@ -138,7 +146,7 @@ const LEGACY_DEFAULT_PRODUCT_NOTES = new Set([
 
 const SUPPORT_TAB_PATTERNS = [
   "https://hostinger.titan.email/*",
-  "https://plugincy.com/wp-admin/*"
+  "https://plugincy.com/wp-admin/admin.php*"
 ];
 
 const FEEDS = [
@@ -174,6 +182,7 @@ const MONITORED_PLUGINS = [
 
 let jobStateChain = Promise.resolve();
 let taskStateChain = Promise.resolve();
+let draftStateChain = Promise.resolve();
 let queueDispatchInProgress = false;
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -182,10 +191,6 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   void initializeExtension();
-});
-
-chrome.action.onClicked.addListener((tab) => {
-  void openTodoOverlayForTab(tab);
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -245,22 +250,31 @@ async function initializeExtension() {
 
   if (
     !settingsResult[SETTINGS_KEY] ||
-    Object.keys(DEFAULT_SETTINGS).some((key) => !(key in existingSettings)) ||
-    existingSettings.autoProcessTickets !== false ||
-    existingSettings.autoSendReplies !== false
+    Object.keys(DEFAULT_SETTINGS).some((key) => !(key in existingSettings))
   ) {
     await chrome.storage.sync.set({
       [SETTINGS_KEY]: {
         ...DEFAULT_SETTINGS,
         ...existingSettings,
-        autoSendReplies: false,
         autoProcessTickets: false,
+        autoSendReplies: existingSettings.autoSendReplies === true,
+        autoSendDelaySeconds: Math.min(
+          30,
+          Math.max(3, Number(existingSettings.autoSendDelaySeconds || 8))
+        ),
+        sidebarCollapsed: existingSettings.sidebarCollapsed === true,
         theme: existingSettings.theme === "dark" ? "dark" : "light"
       }
     });
   }
 
+  await migrateDetailedRecordsToLocal();
   await ensureDefaultProducts();
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(
+    (error) => {
+      console.warn("Could not configure the extension side panel:", error);
+    }
+  );
 
   await Promise.all([
     chrome.alarms.create("rpa-news-refresh", { periodInMinutes: 60 }),
@@ -305,6 +319,210 @@ async function initializeExtension() {
   void recoverQueue();
 }
 
+async function getSettings() {
+  const result = await chrome.storage.sync.get(SETTINGS_KEY);
+  const stored =
+    result[SETTINGS_KEY] && typeof result[SETTINGS_KEY] === "object"
+      ? result[SETTINGS_KEY]
+      : {};
+  return {
+    ...DEFAULT_SETTINGS,
+    ...stored,
+    autoSendReplies: stored.autoSendReplies === true,
+    autoProcessTickets: false,
+    autoSendDelaySeconds: Math.min(
+      30,
+      Math.max(3, Number(stored.autoSendDelaySeconds || 8))
+    ),
+    sidebarCollapsed: stored.sidebarCollapsed === true,
+    theme: stored.theme === "dark" ? "dark" : "light"
+  };
+}
+
+async function migrateDetailedRecordsToLocal() {
+  const local = await chrome.storage.local.get(null);
+  if (local[LOCAL_STORAGE_MIGRATED_KEY]) {
+    return;
+  }
+
+  const synced = await chrome.storage.sync.get(null);
+  const localWrites = {};
+  const syncRemovals = [];
+  for (const [key, value] of Object.entries(synced)) {
+    if (
+      key === TASK_INDEX_KEY ||
+      key.startsWith(TASK_KEY_PREFIX) ||
+      key === PRODUCT_INDEX_KEY ||
+      key.startsWith(PRODUCT_KEY_PREFIX) ||
+      key === DEFAULT_PRODUCTS_SEEDED_KEY
+    ) {
+      if (!(key in local)) {
+        localWrites[key] = value;
+      }
+      syncRemovals.push(key);
+    }
+  }
+
+  await chrome.storage.local.set({
+    ...localWrites,
+    [LOCAL_STORAGE_MIGRATED_KEY]: true
+  });
+  if (syncRemovals.length) {
+    await chrome.storage.sync.remove(syncRemovals);
+  }
+}
+
+function withDraftLock(operation) {
+  const next = draftStateChain.then(operation, operation);
+  draftStateChain = next.catch(() => undefined);
+  return next;
+}
+
+function saveDraftRecord(record) {
+  return withDraftLock(() => saveDraftRecordUnlocked(record));
+}
+
+async function saveDraftRecordUnlocked(record) {
+  const draft = {
+    id: cleanText(record.id, 80),
+    signature: cleanText(record.signature, 180),
+    status: [
+      "queued",
+      "processing",
+      "draft_ready",
+      "failed",
+      "escalated",
+      "auto_sent"
+    ].includes(record.status)
+      ? record.status
+      : "failed",
+    ticketUrl: normalizeSupportUrl(record.ticketUrl),
+    ticketId: cleanText(record.ticketId, 80),
+    customer: cleanText(record.customer, 160),
+    subject: cleanText(record.subject || "Customer support ticket", 160),
+    product: cleanText(record.product, 160),
+    source: ["fluent-support", "titan-mail"].includes(record.source)
+      ? record.source
+      : "fluent-support",
+    ticket: record.ticket && typeof record.ticket === "object" ? record.ticket : null,
+    draftText: cleanText(record.draftText, 30000),
+    error: cleanText(record.error, 800),
+    attempts: Math.max(1, Number(record.attempts || 1)),
+    createdAt: Number(record.createdAt || Date.now()),
+    updatedAt: Number(record.updatedAt || Date.now()),
+    sentAt: Number(record.sentAt || 0)
+  };
+  if (!draft.id) {
+    throw new Error("Draft record is missing an ID.");
+  }
+
+  const result = await chrome.storage.local.get(DRAFT_INDEX_KEY);
+  const currentIndex = Array.isArray(result[DRAFT_INDEX_KEY])
+    ? result[DRAFT_INDEX_KEY].filter((id) => typeof id === "string")
+    : [];
+  const nextIndex = [draft.id, ...currentIndex.filter((id) => id !== draft.id)].slice(
+    0,
+    MAX_DRAFTS
+  );
+  await chrome.storage.local.set({
+    [DRAFT_INDEX_KEY]: nextIndex,
+    [`${DRAFT_KEY_PREFIX}${draft.id}`]: draft
+  });
+
+  const removed = currentIndex.filter((id) => !nextIndex.includes(id));
+  if (removed.length) {
+    await chrome.storage.local.remove(removed.map((id) => `${DRAFT_KEY_PREFIX}${id}`));
+  }
+  return draft;
+}
+
+async function updateDraftRecord(draftId, changes) {
+  return withDraftLock(async () => {
+    const key = `${DRAFT_KEY_PREFIX}${cleanText(draftId, 80)}`;
+    const result = await chrome.storage.local.get(key);
+    const current = result[key];
+    if (!current || typeof current !== "object") {
+      return null;
+    }
+    return saveDraftRecordUnlocked({
+      ...current,
+      ...changes,
+      id: current.id,
+      updatedAt: Date.now()
+    });
+  });
+}
+
+async function findDraftBySignature(signature) {
+  const data = await chrome.storage.local.get(null);
+  const index = Array.isArray(data[DRAFT_INDEX_KEY]) ? data[DRAFT_INDEX_KEY] : [];
+  return (
+    index
+      .map((id) => data[`${DRAFT_KEY_PREFIX}${id}`])
+      .find((draft) => draft?.signature === signature) || null
+  );
+}
+
+async function deleteDraft(draftId) {
+  const id = cleanText(draftId, 80);
+  if (!id) {
+    throw new Error("Draft ID is required.");
+  }
+  return withDraftLock(async () => {
+    const result = await chrome.storage.local.get(DRAFT_INDEX_KEY);
+    const index = Array.isArray(result[DRAFT_INDEX_KEY]) ? result[DRAFT_INDEX_KEY] : [];
+    await Promise.all([
+      chrome.storage.local.set({
+        [DRAFT_INDEX_KEY]: index.filter((candidate) => candidate !== id)
+      }),
+      chrome.storage.local.remove(`${DRAFT_KEY_PREFIX}${id}`)
+    ]);
+    return { deleted: true };
+  });
+}
+
+async function retryDraft(draftId) {
+  const id = cleanText(draftId, 80);
+  const key = `${DRAFT_KEY_PREFIX}${id}`;
+  const result = await chrome.storage.local.get(key);
+  const draft = result[key];
+  if (!draft?.ticket) {
+    throw new Error("The saved ticket context is unavailable for retry.");
+  }
+  if (["queued", "processing"].includes(draft.status)) {
+    throw new Error("This draft is already queued or processing.");
+  }
+
+  const response = await processTicket(draft.ticket, null, { forceRetry: true });
+  await deleteDraft(id);
+  return response;
+}
+
+async function handleAutoSendResult(message) {
+  const draftId = cleanText(message.draftId, 80);
+  if (!draftId) {
+    throw new Error("Auto-reply result is missing its draft ID.");
+  }
+  const sent = message.sent === true;
+  const updated = await updateDraftRecord(draftId, {
+    status: sent ? "auto_sent" : "draft_ready",
+    error: sent ? "" : cleanText(message.error || "Automatic sending failed.", 800),
+    sentAt: sent ? Date.now() : 0
+  });
+  if (updated) {
+    await logActivity({
+      status: sent ? "sent" : "error",
+      title: updated.subject,
+      detail: sent
+        ? "The reviewed automation path inserted and sent the reply."
+        : `Auto-send stopped safely: ${updated.error}`,
+      source: updated.source,
+      sourceUrl: updated.ticketUrl
+    });
+  }
+  return { updated: Boolean(updated), sent };
+}
+
 async function routeMessage(message, sender) {
   if (!message || typeof message.type !== "string") {
     throw new Error("Invalid extension message.");
@@ -325,6 +543,25 @@ async function routeMessage(message, sender) {
 
     case "RPA_PROCESS_CURRENT_TICKET":
       return processCurrentSupportTab();
+
+    case "RPA_OPEN_SIDE_PANEL":
+      assertSupportSender(sender, { requireTicket: false });
+      await openSidePanel(sender.tab);
+      return { opened: true };
+
+    case "RPA_OPEN_CHATGPT":
+      await findOrCreateChatGptTab({ active: true });
+      return { opened: true };
+
+    case "RPA_RETRY_DRAFT":
+      return retryDraft(message.draftId);
+
+    case "RPA_DELETE_DRAFT":
+      return deleteDraft(message.draftId);
+
+    case "RPA_AUTO_SEND_RESULT":
+      assertSupportSender(sender);
+      return handleAutoSendResult(message);
 
     case "RPA_GET_SESSION_HEALTH":
       return { services: await getSessionHealth() };
@@ -347,7 +584,7 @@ async function routeMessage(message, sender) {
       };
 
     case "RPA_REPORT_SOURCE_STATE":
-      assertSupportSender(sender);
+      assertSupportSender(sender, { requireTicket: false });
       return handleSourceStateReport(message, sender.tab);
 
     case "RPA_ENSURE_DEFAULT_PRODUCTS":
@@ -361,37 +598,21 @@ async function routeMessage(message, sender) {
   }
 }
 
-async function openTodoOverlayForTab(tab) {
-  if (!tab?.id || !/^https?:\/\//i.test(tab.url || "")) {
-    await chrome.tabs.create({
-      url: chrome.runtime.getURL("dashboard/newtab.html")
-    });
-    return;
+async function openSidePanel(tab) {
+  const windowId = Number(tab?.windowId || 0);
+  if (!windowId) {
+    throw new Error("The support window could not be identified.");
   }
-
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["content/todo-overlay.js"]
-    });
-
-    await chrome.tabs.sendMessage(tab.id, {
-      type: "RPA_TODO_TOGGLE"
-    });
-  } catch (error) {
-    console.warn("Could not open the tab To-Do overlay; opening dashboard instead:", error);
-    await chrome.tabs.create({
-      url: chrome.runtime.getURL("dashboard/newtab.html")
-    });
-  }
+  await chrome.sidePanel.open({ windowId });
 }
 
-function assertSupportSender(sender) {
+function assertSupportSender(sender, { requireTicket = true } = {}) {
   const url = sender.tab?.url || "";
-  if (
-    !url.startsWith("https://hostinger.titan.email/") &&
-    !url.startsWith("https://plugincy.com/wp-admin/")
-  ) {
+  const isTitan = url.startsWith("https://hostinger.titan.email/");
+  const isFluentPage = /^https:\/\/plugincy\.com\/wp-admin\/admin\.php(?:[?#]|$)/i.test(url);
+  const isFluentTicket = PlugincyWorkflowCore.isFluentSupportTicketUrl(url);
+
+  if (!isTitan && !(requireTicket ? isFluentTicket : isFluentPage)) {
     throw new Error("Ticket processing is only allowed from configured support pages.");
   }
 }
@@ -402,25 +623,49 @@ function assertChatGptSender(sender) {
   }
 }
 
-async function processTicket(rawTicket, originTab) {
-  const ticket = await enrichTicketWithProduct(normalizeTicket(rawTicket, originTab));
+async function processTicket(rawTicket, originTab, { forceRetry = false } = {}) {
+  if (!rawTicket || typeof rawTicket !== "object") {
+    throw new Error("No ticket data was supplied.");
+  }
 
-  if (containsCredentials(ticket.text)) {
+  const rawSubject = String(rawTicket.subject || "");
+  const rawText = String(rawTicket.text || "");
+  const detectedSecrets = PlugincyWorkflowCore.detectSecrets(rawSubject, rawText);
+  const reportedSecretTypes = Array.isArray(rawTicket.secretTypes)
+    ? rawTicket.secretTypes.map((value) => cleanText(value, 60)).filter(Boolean)
+    : [];
+  const secretResult = {
+    found: detectedSecrets.found || reportedSecretTypes.length > 0,
+    types: uniqueStrings([...detectedSecrets.types, ...reportedSecretTypes])
+  };
+
+  if (secretResult.found) {
+    const safeTicket = normalizeTicket(
+      {
+        ...rawTicket,
+        subject:
+          PlugincyWorkflowCore.redactSecrets(rawSubject) || "Sensitive support ticket",
+        text: "Sensitive access details were blocked before support automation."
+      },
+      originTab
+    );
     const task = await createEscalationTask({
-      summary: `Temporary WordPress access details detected in “${ticket.subject}”. Review the ticket manually; no credential values were copied.`,
-      ticket,
+      summary: `Sensitive ${secretResult.types.join(
+        ", "
+      )} data was detected. Review the ticket manually; no secret values were copied.`,
+      ticket: safeTicket,
       reason: "credentials"
     });
 
     await logActivity({
       status: "escalated",
-      title: ticket.subject,
-      detail: "Credentials detected locally; ticket was not sent to ChatGPT.",
-      source: ticket.source,
-      sourceUrl: ticket.pageUrl
+      title: safeTicket.subject,
+      detail: "Sensitive data was detected locally; the ticket was not sent to ChatGPT.",
+      source: safeTicket.source,
+      sourceUrl: safeTicket.pageUrl
     });
 
-    await notifyOrigin(ticket.originTabId, {
+    await notifyOrigin(safeTicket.originTabId, {
       status: "escalated",
       summary: task.title,
       reason: "credentials"
@@ -434,23 +679,91 @@ async function processTicket(rawTicket, originTab) {
     };
   }
 
+  if (
+    rawTicket.source === "titan-mail" ||
+    originTab?.url?.includes("hostinger.titan.email")
+  ) {
+    const classification = PlugincyWorkflowCore.classifyEmail({
+      subject: rawSubject,
+      text: rawText
+    });
+    if (!classification.isSupport) {
+      await logActivity({
+        status: "ignored",
+        title: cleanText(rawSubject || "Titan email", 160),
+        detail: `${classification.reason}; it was not sent to ChatGPT.`,
+        source: "titan-mail",
+        sourceUrl: rawTicket.pageUrl || originTab?.url || ""
+      });
+      throw new Error(`${classification.reason}. This email was excluded from support drafting.`);
+    }
+  }
+
+  const ticket = await enrichTicketWithProduct(normalizeTicket(rawTicket, originTab));
+  const signature = PlugincyWorkflowCore.createTicketSignature(ticket);
+  const settings = await getSettings();
+  const existingDraft = forceRetry ? null : await findDraftBySignature(signature);
+  if (existingDraft) {
+    throw new Error(
+      existingDraft.status === "draft_ready" || existingDraft.status === "auto_sent"
+        ? "A draft already exists for this ticket. Open Draft Inbox or use Retry."
+        : existingDraft.status === "failed" || existingDraft.status === "escalated"
+          ? "This ticket already has a saved failed or escalated record. Use Retry in Draft Inbox."
+          : `This ticket is already ${
+              existingDraft.status === "queued" ? "queued" : "being processed"
+            }.`
+    );
+  }
+
   const job = {
     id: crypto.randomUUID(),
+    signature,
     createdAt: Date.now(),
     originTabId: ticket.originTabId,
+    autoSend: settings.autoSendReplies === true,
     ticket
   };
 
-  await mutateJobState((state) => {
+  const duplicate = await mutateJobState((state) => {
+    const existing = PlugincyWorkflowCore.findDuplicateJob(state, signature);
+    if (existing && !forceRetry) {
+      return existing;
+    }
     if (state.queue.length >= MAX_QUEUE_SIZE) {
       throw new Error("The automation queue is full. Finish the current ticket first.");
     }
-
     state.queue.push(job);
+    return null;
+  });
+
+  if (duplicate) {
+    throw new Error(
+      duplicate.status === "processing"
+        ? "This ticket is already being processed."
+        : "This ticket is already queued."
+    );
+  }
+
+  await saveDraftRecord({
+    id: job.id,
+    signature,
+    status: "queued",
+    ticketUrl: ticket.pageUrl,
+    ticketId: ticket.ticketId,
+    customer: ticket.customer,
+    subject: ticket.subject,
+    product: ticket.product?.name || "",
+    source: ticket.source,
+    ticket,
+    draftText: "",
+    error: "",
+    attempts: Number(existingDraft?.attempts || 0) + 1,
+    createdAt: Number(existingDraft?.createdAt || Date.now()),
+    updatedAt: Date.now()
   });
 
   await logActivity({
-    status: "ready",
+    status: "queued",
     title: ticket.subject,
     detail: "Ticket queued for ChatGPT drafting.",
     source: ticket.source,
@@ -462,7 +775,9 @@ async function processTicket(rawTicket, originTab) {
   return {
     accepted: true,
     escalated: false,
-    jobId: job.id
+    jobId: job.id,
+    draftId: job.id,
+    status: "queued"
   };
 }
 
@@ -493,6 +808,7 @@ function normalizeTicket(rawTicket, originTab) {
     productId: cleanText(rawTicket.productId || "", 80),
     source,
     ticketId: cleanText(rawTicket.ticketId || "", 80),
+    customer: cleanText(rawTicket.customer || "", 160),
     pageUrl,
     originTabId: Number(originTab?.id || rawTicket.originTabId || 0)
   };
@@ -527,7 +843,7 @@ async function enrichTicketWithProduct(ticket) {
 }
 
 async function loadProducts() {
-  const data = await chrome.storage.sync.get(null);
+  const data = await chrome.storage.local.get(null);
   const index = Array.isArray(data[PRODUCT_INDEX_KEY])
     ? data[PRODUCT_INDEX_KEY].filter((id) => typeof id === "string")
     : [];
@@ -539,7 +855,7 @@ async function loadProducts() {
 }
 
 async function ensureDefaultProducts() {
-  const data = await chrome.storage.sync.get(null);
+  const data = await chrome.storage.local.get(null);
   const currentIndex = Array.isArray(data[PRODUCT_INDEX_KEY])
     ? data[PRODUCT_INDEX_KEY].filter((id) => typeof id === "string")
     : [];
@@ -585,7 +901,7 @@ async function ensureDefaultProducts() {
   }
 
   writes[PRODUCT_INDEX_KEY] = uniqueStrings(nextIndex).slice(0, MAX_PRODUCTS);
-  await chrome.storage.sync.set(writes);
+  await chrome.storage.local.set(writes);
 }
 
 function isSameProductRecord(a, b) {
@@ -846,33 +1162,6 @@ function normalizeSupportUrl(value) {
   }
 }
 
-function containsCredentials(text) {
-  const value = String(text || "");
-  const passwordMatch = value.match(
-    /\b(?:password|passcode|passwd|pwd|temporary password|admin password)\b\s*(?:is|:|=|-)\s*([^\s,;]+)/i
-  );
-  const passwordSignal = Boolean(
-    passwordMatch &&
-      !/^(?:not|wrong|incorrect|invalid|missing|unknown|expired|reset|changed|working)$/i.test(
-        passwordMatch[1]
-      )
-  );
-  const usernameSignal =
-    /\b(?:username|user name|admin user|login user|wp user)\b\s*(?:is|:|=|-)\s*\S+/i.test(
-      value
-    );
-  const loginSignal =
-    /(?:\/wp-admin\/?|\/wp-login\.php|wordpress\s+(?:admin|login)|temporary\s+(?:admin|login)|login\s+details)/i.test(
-      value
-    );
-  const credentialBlock =
-    /\b(?:credentials?|login details?|admin access)\b[\s\S]{0,240}\b(?:password|passwd|pwd)\b/i.test(
-      value
-    );
-
-  return passwordSignal || credentialBlock || (usernameSignal && loginSignal);
-}
-
 async function dispatchNextJob() {
   if (queueDispatchInProgress) {
     return;
@@ -899,7 +1188,11 @@ async function dispatchNextJob() {
     }
 
     try {
-      const gptTab = await findOrCreateChatGptTab();
+      await updateDraftRecord(job.id, {
+        status: "processing",
+        error: ""
+      });
+      const gptTab = await findOrCreateChatGptTab({ active: !job.autoSend });
       await ensureContentScript(
         gptTab.id,
         ["content/prompt-builder.js", "content/gpt-controller.js"],
@@ -936,7 +1229,7 @@ async function dispatchNextJob() {
   }
 }
 
-async function findOrCreateChatGptTab() {
+async function findOrCreateChatGptTab({ active = false } = {}) {
   const stored = await chrome.storage.session.get(GPT_TAB_ID_KEY);
   const storedTabId = Number(stored[GPT_TAB_ID_KEY] || 0);
   let tab = null;
@@ -955,12 +1248,18 @@ async function findOrCreateChatGptTab() {
   if (!tab) {
     tab = await chrome.tabs.create({
       url: GPT_URL,
-      active: false,
+      active,
       pinned: true
     });
     await chrome.storage.session.set({ [GPT_TAB_ID_KEY]: tab.id });
-  } else if (!tab.pinned) {
-    tab = await chrome.tabs.update(tab.id, { pinned: true });
+  } else {
+    tab = await chrome.tabs.update(tab.id, {
+      pinned: true,
+      active
+    });
+    if (active && Number.isInteger(tab.windowId)) {
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
   }
 
   await waitForTabComplete(tab.id);
@@ -1046,17 +1345,41 @@ async function handleGptResult(message) {
       reason: "ai",
       taskId: task.id
     });
-  } else {
-    await notifyOrigin(job.originTabId, {
-      status: "draft",
-      response: responseText,
-      jobId: job.id
+    await updateDraftRecord(job.id, {
+      status: "escalated",
+      draftText: "",
+      error: escalation
     });
+  } else {
+    await updateDraftRecord(job.id, {
+      status: "draft_ready",
+      draftText: responseText,
+      error: ""
+    });
+
+    const settings = await getSettings();
+    const delivered = await notifyOrigin(job.originTabId, {
+      status: "draft",
+      response: job.autoSend ? responseText : "",
+      jobId: job.id,
+      draftId: job.id,
+      signature: job.signature,
+      autoSend: job.autoSend,
+      autoSendDelaySeconds: settings.autoSendDelaySeconds
+    });
+    if (job.autoSend && !delivered) {
+      await updateDraftRecord(job.id, {
+        status: "draft_ready",
+        error: "The original support tab was closed, so auto-send was skipped."
+      });
+    }
 
     await logActivity({
       status: "draft",
       title: job.ticket.subject,
-      detail: "AI response is ready in the support-page sidebar.",
+      detail: job.autoSend
+        ? "Draft saved; the support page is validating the auto-send target."
+        : "Draft saved in the persistent Draft Inbox.",
       source: job.ticket.source,
       sourceUrl: job.ticket.pageUrl
     });
@@ -1094,6 +1417,10 @@ async function failActiveJob(jobId, errorMessage) {
     status: "error",
     error: errorMessage
   });
+  await updateDraftRecord(job.id, {
+    status: "failed",
+    error: errorMessage
+  });
 
   await logActivity({
     status: "error",
@@ -1116,12 +1443,7 @@ function parseEscalation(responseText) {
 }
 
 function redactCredentialValues(text) {
-  return String(text || "")
-    .replace(
-      /(\b(?:password|passcode|passwd|pwd|username|user name|login)\b\s*(?:is|:|=|-)\s*)\S+/gi,
-      "$1[redacted]"
-    )
-    .replace(/https?:\/\/[^/\s]+:[^@\s]+@[^\s]+/gi, "[redacted credential URL]");
+  return PlugincyWorkflowCore.redactSecrets(text);
 }
 
 async function createEscalationTask({ summary, ticket, reason }) {
@@ -1139,13 +1461,13 @@ async function createEscalationTask({ summary, ticket, reason }) {
     completedAt: null
   };
 
-  await upsertSyncedTask(task);
+  await upsertLocalTask(task);
   return task;
 }
 
-async function upsertSyncedTask(task) {
+async function upsertLocalTask(task) {
   return withTaskLock(async () => {
-    const result = await chrome.storage.sync.get(TASK_INDEX_KEY);
+    const result = await chrome.storage.local.get(TASK_INDEX_KEY);
     const currentIndex = Array.isArray(result[TASK_INDEX_KEY])
       ? result[TASK_INDEX_KEY].filter((id) => typeof id === "string")
       : [];
@@ -1155,14 +1477,14 @@ async function upsertSyncedTask(task) {
       MAX_TASKS
     );
 
-    await chrome.storage.sync.set({
+    await chrome.storage.local.set({
       [TASK_INDEX_KEY]: nextIndex,
       [`${TASK_KEY_PREFIX}${task.id}`]: task
     });
 
     const removedIds = currentIndex.filter((id) => !nextIndex.includes(id));
     if (removedIds.length) {
-      await chrome.storage.sync.remove(
+      await chrome.storage.local.remove(
         removedIds.map((id) => `${TASK_KEY_PREFIX}${id}`)
       );
     }
@@ -1194,35 +1516,61 @@ async function notifyOrigin(tabId, payload) {
 
 async function processCurrentSupportTab() {
   const tabs = await chrome.tabs.query({ url: SUPPORT_TAB_PATTERNS });
-  const target = tabs.sort((a, b) => {
+  const candidates = tabs
+    .filter(
+      (tab) =>
+        tab.url?.startsWith("https://hostinger.titan.email/") ||
+        PlugincyWorkflowCore.isFluentSupportTicketUrl(tab.url)
+    )
+    .sort((a, b) => {
     if (a.active !== b.active) {
       return a.active ? -1 : 1;
     }
     return Number(b.lastAccessed || 0) - Number(a.lastAccessed || 0);
-  })[0];
+    });
 
-  if (!target?.id) {
+  if (!candidates.length) {
     throw new Error("Open a Fluent Support ticket or Titan email first.");
   }
 
-  await ensureContentScript(
-    target.id,
-    ["content/scraper.js", "content/source-notifier.js"],
-    "RPA_SUPPORT_PING"
-  );
-  const result = await chrome.tabs.sendMessage(target.id, {
-    type: "RPA_CAPTURE_TICKET"
-  });
+  let lastConnectionError = null;
+  for (const target of candidates) {
+    let health;
+    try {
+      await ensureContentScript(
+        target.id,
+        ["shared/workflow-core.js", "content/scraper.js", "content/source-notifier.js"],
+        "RPA_SUPPORT_PING"
+      );
+      health = await chrome.tabs.sendMessage(target.id, {
+        type: "RPA_SUPPORT_PING"
+      });
+    } catch (error) {
+      lastConnectionError = error;
+      console.warn("Support tab was not ready for capture:", error);
+      continue;
+    }
+    if (!health?.detailOpen) {
+      continue;
+    }
 
-  if (!result?.accepted) {
-    throw new Error(result?.error || "The support ticket could not be captured.");
+    const result = await chrome.tabs.sendMessage(target.id, {
+      type: "RPA_CAPTURE_TICKET"
+    });
+    if (!result?.accepted) {
+      throw new Error(result?.error || "The support ticket could not be captured.");
+    }
+    return {
+      accepted: true,
+      sourceTabId: target.id,
+      source: result.source
+    };
   }
 
-  return {
-    accepted: true,
-    sourceTabId: target.id,
-    source: result.source
-  };
+  if (lastConnectionError && candidates.length === 1) {
+    throw lastConnectionError;
+  }
+  throw new Error("Open a Fluent Support ticket detail or a readable Titan email first.");
 }
 
 async function getSessionHealth() {
@@ -1236,7 +1584,7 @@ async function getSessionHealth() {
     {
       id: "fluent-support",
       label: "Fluent Support",
-      patterns: ["https://plugincy.com/wp-admin/*"],
+      patterns: ["https://plugincy.com/wp-admin/admin.php*"],
       ping: "RPA_SUPPORT_PING"
     },
     {
@@ -1265,7 +1613,11 @@ async function getSessionHealth() {
           tab.id,
           definition.id === "chatgpt"
             ? ["content/prompt-builder.js", "content/gpt-controller.js"]
-            : ["content/scraper.js", "content/source-notifier.js"],
+            : [
+                "shared/workflow-core.js",
+                "content/scraper.js",
+                "content/source-notifier.js"
+              ],
           definition.ping
         );
         const response = await chrome.tabs.sendMessage(tab.id, {
@@ -1306,17 +1658,14 @@ async function getQueueStatus() {
 
 async function recoverQueue() {
   const timedOutJob = await mutateJobState((state) => {
-    if (
-      state.active &&
-      Date.now() - Number(state.active.startedAt || state.active.createdAt || 0) >
-        ACTIVE_JOB_TIMEOUT_MS
-    ) {
-      const job = state.active;
-      state.active = null;
-      return job;
-    }
-
-    return null;
+    const recovery = PlugincyWorkflowCore.recoverTimedOutJob(
+      state,
+      Date.now(),
+      ACTIVE_JOB_TIMEOUT_MS
+    );
+    state.queue = recovery.state.queue;
+    state.active = recovery.state.active;
+    return recovery.timedOutJob;
   });
 
   if (timedOutJob) {
@@ -1332,13 +1681,17 @@ async function recoverQueue() {
       source: timedOutJob.ticket.source,
       sourceUrl: timedOutJob.ticket.pageUrl
     });
+    await updateDraftRecord(timedOutJob.id, {
+      status: "failed",
+      error: "ChatGPT did not finish within six minutes."
+    });
   }
 
   void dispatchNextJob();
 }
 
 async function readJobState() {
-  const result = await chrome.storage.session.get(JOB_STATE_KEY);
+  const result = await chrome.storage.local.get(JOB_STATE_KEY);
   return normalizeJobState(result[JOB_STATE_KEY]);
 }
 
@@ -1346,7 +1699,7 @@ function mutateJobState(mutator) {
   const operation = jobStateChain.then(async () => {
     const state = await readJobState();
     const result = await mutator(state);
-    await chrome.storage.session.set({ [JOB_STATE_KEY]: state });
+    await chrome.storage.local.set({ [JOB_STATE_KEY]: state });
     return result;
   });
 

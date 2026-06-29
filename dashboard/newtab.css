@@ -150,6 +150,7 @@ svg {
   display: grid;
   min-height: 100vh;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  transition: grid-template-columns 180ms ease;
 }
 
 .sidebar {
@@ -163,14 +164,68 @@ svg {
   padding: 24px 12px 16px;
   background: linear-gradient(180deg, var(--sidebar), var(--sidebar-deep));
   color: var(--sidebar-text);
+  transition: width 180ms ease;
 }
 
 .brand {
+  position: relative;
   display: grid;
   min-height: 58px;
   gap: 5px;
   align-content: center;
   padding: 8px 10px;
+}
+
+.sidebar-collapse {
+  position: absolute;
+  top: 12px;
+  right: -27px;
+  display: grid;
+  width: 28px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-left: 0;
+  border-radius: 0 9px 9px 0;
+  background: var(--sidebar);
+  color: #fff;
+  cursor: pointer;
+  font-size: 22px;
+}
+
+html[data-sidebar="collapsed"] {
+  --sidebar-width: 80px;
+}
+
+html[data-sidebar="collapsed"] .brand {
+  justify-content: center;
+  padding-inline: 6px;
+}
+
+html[data-sidebar="collapsed"] .brand-logo {
+  width: 54px;
+}
+
+html[data-sidebar="collapsed"] .brand-product,
+html[data-sidebar="collapsed"] .nav-link > span:not(.mini-toggle) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+html[data-sidebar="collapsed"] .nav-link {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+html[data-sidebar="collapsed"] .mini-toggle {
+  display: none;
+}
+
+html[data-sidebar="collapsed"] .sidebar-collapse {
+  transform: rotate(180deg);
 }
 
 .brand-logo {
@@ -465,7 +520,7 @@ svg {
 }
 
 .weather-summary {
-  display: inline-flex;
+  display: none;
   min-height: 26px;
   align-items: center;
   border: 1px solid var(--border);
@@ -475,6 +530,98 @@ svg {
   color: var(--text);
   font-size: 11px;
   font-weight: 700;
+}
+
+.weather-section {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(170px, 1fr) auto minmax(210px, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin-top: 22px;
+  padding: 18px 20px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 95% 15%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 34%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-soft) 58%, var(--surface)), var(--surface));
+  box-shadow: 0 14px 30px rgba(16, 34, 61, .07);
+}
+
+.weather-section::after {
+  position: absolute;
+  right: 24%;
+  bottom: -45px;
+  width: 130px;
+  height: 90px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  content: "";
+  filter: blur(2px);
+}
+
+.weather-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 8px 20px rgba(16, 34, 61, .08);
+  font-size: 22px;
+}
+
+.weather-current,
+.weather-forecast,
+.weather-temperature,
+.weather-refresh {
+  position: relative;
+  z-index: 1;
+}
+
+.weather-label,
+.weather-forecast span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.weather-current h2 {
+  margin: 3px 0 2px;
+  font-size: 16px;
+  letter-spacing: -.025em;
+}
+
+.weather-current p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.weather-temperature {
+  padding-inline: 18px;
+  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  font-size: 32px;
+  font-weight: 780;
+  letter-spacing: -.06em;
+}
+
+.weather-forecast strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.weather-refresh {
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
 }
 
 .state-dot {
@@ -1610,6 +1757,18 @@ svg {
 }
 
 @media (max-width: 900px) {
+  .weather-section {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .weather-forecast {
+    grid-column: 2 / -1;
+  }
+
+  .weather-temperature {
+    border-right: 0;
+  }
+
   .topbar {
     position: static;
     min-height: auto;
@@ -1675,6 +1834,20 @@ svg {
     flex-direction: row;
     align-items: center;
     padding: 10px 14px;
+  }
+
+  .sidebar-collapse {
+    display: none;
+  }
+
+  .weather-section {
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .weather-forecast {
+    grid-column: 1 / -1;
   }
 
   .brand {
