@@ -22,8 +22,9 @@ No API key is used. The extension operates through page DOM content scripts in y
   - `https://hostinger.titan.email/mail/`
 - ChatGPT DOM controller with a serialized job queue and completion `MutationObserver`.
 - Product repositories, documentation, landing pages, and other configured URLs are analysis references. The prompt uses them to verify code and product behavior; it does not automatically expose them as customer-facing quick links.
-- Secret detection for credentials, API tokens, license keys, authorization headers, basic-auth URLs, database/hosting access, and private keys. Subject and full conversation are scanned before truncation.
-- AI escalation handling. `ESCALATE_TO_HUMAN: ...` results become high-priority local tasks instead of replies.
+- Pending-message detection so ChatGPT replies only to customer messages that arrived after the latest support reply.
+- Credential/access-message handling. Customer-provided temporary login, hosting, FTP/SFTP/SSH, database, license, or other access details are accepted as support context and converted into one local manual task when they are the latest unreplied customer update.
+- AI escalation handling. `ESCALATE_TO_HUMAN: ...` results, or the same marker in an unreplied mail message, become high-priority local tasks instead of replies.
 - Persistent native Chrome side panel with Draft Inbox, editable replies, copy/retry/delete actions, ticket links, and local tasks.
 - Professional auto-reply is opt-in and off by default. It revalidates the same open ticket, waits through a safety delay, and keeps the draft when insertion or sending cannot be confirmed safely.
 - Persistent-profile Playwright smoke test.
@@ -46,17 +47,21 @@ The extension creates and reuses its own pinned ChatGPT tab during ticket proces
 
 1. Open a Fluent Support ticket or Titan email.
 2. Select **Generate GPT reply** in the compact support-page launcher, or use **Process ticket** in the native side panel.
+   Use **Fixed** when the issue has already been fixed and checked from your end; it saves a ready-made follow-up draft without using ChatGPT.
+   Use **5-star** when you want to ask a happy customer for a product-specific WordPress.org review; the review link comes from the matched product library record.
+   Use **Custom** to type a short rough reply and let ChatGPT polish it into a professional support response.
 3. ChatGPT opens in its real browser tab so you can review, edit, or continue prompting there.
 4. The completed result is saved in **Draft Inbox**. Copy/edit it there, or enable professional auto-reply in preferences.
 
-If temporary WordPress credentials are detected, the ticket is escalated locally and no ticket text is sent to ChatGPT. `ESCALATE_TO_HUMAN: ...` is reserved for tickets where a safe customer-facing draft cannot be produced because sensitive access details are already present, immediate internal/manual action is required, or another genuine safety boundary applies.
+If the latest unreplied customer message only provides temporary access details, the extension creates or updates a local manual task and does not generate a customer reply. `ESCALATE_TO_HUMAN: ...` is reserved for unreplied messages where immediate internal/manual action is required or another genuine safety boundary applies.
 
 Brief or incomplete reports are not escalated by default. The generated reply asks for the exact missing diagnostic details. When hands-on investigation is reasonably required, it asks the customer to provide minimum temporary staging/admin access through the approved secure support channel.
 
 ## Notifications and release checks
 
-- Fluent Support and Titan notifications are detected from unread/new markers exposed by their open browser tabs. Keep those services open for source notifications; DOM changes in either service may require selector maintenance.
+- Fluent Support and Titan notifications are detected from unread/new row markers exposed by their open browser tabs. Toolbar actions such as "mark as unread" and title-count artifacts are ignored so opening an old mail does not create a new-mail notification. DOM changes in either service may require selector maintenance.
 - WordPress.org support and review feeds are checked every 15 minutes. The first successful check establishes a baseline so existing topics and reviews do not trigger a notification flood.
+- The three default Plugincy product records include WordPress.org review links. Custom product records can store their own review link in the Product/plugin library.
 - Release metadata is read from the official WordPress.org Plugins API every six hours and on manual refresh. Each monitored plugin is due 30 days after its reported `last_updated` value.
 - Selecting a desktop notification focuses an existing matching tab or opens the target in a new tab.
 
@@ -131,11 +136,11 @@ npm run test:unit
 npm run test:workflow
 ```
 
-Validation checks the manifest contract, side-panel configuration, required files, permissions/hosts, New Tab override, service worker entry, and JavaScript syntax. Workflow tests cover the supplied Fluent Support and Titan exports, secret blocking, triage, duplicate signatures, timeout recovery, auto-reply insertion, and the ChatGPT fresh-conversation guard.
+Validation checks the manifest contract, side-panel configuration, required files, permissions/hosts, New Tab override, service worker entry, and JavaScript syntax. Workflow tests cover the supplied Fluent Support and Titan exports, pending-message signatures, credential/manual-task triage, duplicate signatures, timeout recovery, auto-reply insertion, notification false-positive guards, and the ChatGPT fresh-conversation guard.
 
 ## Security boundaries
 
-- Credential detection runs before ChatGPT dispatch.
+- Credential/manual-task detection runs on the latest unreplied customer message before ChatGPT dispatch.
 - Credential values are never copied into task summaries or activity logs.
 - Dynamic RSS and ticket text are rendered with `textContent`, not HTML.
 - Source notifications store only local hashed unread-item fingerprints; ticket and email body content is not copied into notification state.

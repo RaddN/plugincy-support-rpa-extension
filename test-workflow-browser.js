@@ -101,6 +101,58 @@ async function testTitanFixture(browser) {
   await context.close();
 }
 
+async function testSourceNotifierIgnoresOldTitanMail(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    window.__rpaSourceReports = [];
+    window.chrome = {
+      runtime: {
+        id: "workflow-test",
+        async sendMessage(payload) {
+          window.__rpaSourceReports.push(payload);
+          return { ok: true };
+        }
+      }
+    };
+  });
+  await page.route("https://hostinger.titan.email/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `<!doctype html><html><head><title>Inbox (1) - Mail</title></head><body>
+        <main>
+          <button type="button" aria-label="Mark as unread">Mark as unread</button>
+          <article class="message-item-area unread" aria-label="Unread message detail">An already opened customer email.</article>
+        </main>
+      </body></html>`
+    })
+  );
+  await page.goto("https://hostinger.titan.email/mail/", {
+    waitUntil: "domcontentloaded"
+  });
+  await page.addScriptTag({ path: join(root, "content", "source-notifier.js") });
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.PlugincySourceNotifierTest.collectUnreadFingerprints()
+    ),
+    []
+  );
+  assert.equal(
+    await page.evaluate(() => window.PlugincySourceNotifierTest.isNotificationListView()),
+    false
+  );
+  await page.waitForTimeout(2800);
+  const reports = await page.evaluate(() => window.__rpaSourceReports);
+  assert.ok(reports.some((report) => report.type === "RPA_REPORT_SOURCE_STATE"));
+  const report = reports.find((item) => item.type === "RPA_REPORT_SOURCE_STATE");
+  assert.deepEqual(report?.fingerprints, []);
+  assert.equal(report?.baselineOnly, true);
+  assert.equal(report?.listView, false);
+
+  await context.close();
+}
+
 async function testAutoReplyDom(browser) {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -154,6 +206,198 @@ async function testAutoReplyDom(browser) {
   );
   assert.equal(await page.locator("body").getAttribute("data-sent"), "true");
   assert.match(await page.locator("body").getAttribute("data-submitted"), /updated selector/);
+
+  await context.close();
+}
+
+async function testFixedReplyLauncher(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    window.__rpaMessages = [];
+    window.chrome = {
+      runtime: {
+        id: "workflow-test",
+        onMessage: { addListener() {} },
+        async sendMessage(payload) {
+          window.__rpaMessages.push(payload);
+          if (payload.type === "RPA_CREATE_FIXED_REPLY") {
+            return { ok: true, accepted: true, status: "draft_ready" };
+          }
+          return { ok: true, accepted: true, opened: true };
+        }
+      }
+    };
+  });
+  await page.route("https://plugincy.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `<!doctype html><html><body>
+        <div id="wpwrap"></div>
+        <div class="fs_ticket_body">
+          <h2 class="fs_ticket_title"><span>Filter issue</span></h2>
+          <div class="fs_threads_container">
+            <article class="fs_conversation_message fs_thread_starter">
+              <span class="fs_message_name">Customer</span>
+              <span class="fs_message_role">(Customer)</span>
+              <div class="fs_message_body">The filter does not reset after AJAX.</div>
+            </article>
+          </div>
+        </div>
+      </body></html>`
+    })
+  );
+  await page.goto(
+    "https://plugincy.com/wp-admin/admin.php?page=fluent-support#/tickets/61/view"
+  );
+  await injectScraper(page);
+
+  const labels = await page.evaluate(() => {
+    const root = document.getElementById("plugincy-support-rpa-launcher")?.shadowRoot;
+    return [...root.querySelectorAll("button")].map((button) => button.textContent.trim());
+  });
+  assert.deepEqual(labels, ["Generate GPT reply", "Fixed", "5-star", "Custom"]);
+  await page.evaluate(() => {
+    document
+      .getElementById("plugincy-support-rpa-launcher")
+      .shadowRoot.querySelector("button.secondary")
+      .click();
+  });
+  await page.waitForFunction(() =>
+    window.__rpaMessages.some((message) => message.type === "RPA_CREATE_FIXED_REPLY")
+  );
+  const fixedMessage = await page.evaluate(() =>
+    window.__rpaMessages.find((message) => message.type === "RPA_CREATE_FIXED_REPLY")
+  );
+  assert.match(fixedMessage.ticket.subject, /Filter issue/);
+  assert.match(fixedMessage.ticket.text, /filter does not reset/i);
+  const postClickLabels = await page.evaluate(() => {
+    const root = document.getElementById("plugincy-support-rpa-launcher")?.shadowRoot;
+    return [...root.querySelectorAll("button")].map((button) => button.textContent.trim());
+  });
+  assert.deepEqual(postClickLabels, ["Generate GPT reply", "Fixed", "5-star", "Custom"]);
+
+  await context.close();
+}
+
+async function testReviewRequestLauncher(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    window.__rpaMessages = [];
+    window.chrome = {
+      runtime: {
+        id: "workflow-test",
+        onMessage: { addListener() {} },
+        async sendMessage(payload) {
+          window.__rpaMessages.push(payload);
+          if (payload.type === "RPA_CREATE_REVIEW_REQUEST") {
+            return { ok: true, accepted: true, status: "draft_ready" };
+          }
+          return { ok: true, accepted: true, opened: true };
+        }
+      }
+    };
+  });
+  await page.route("https://plugincy.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `<!doctype html><html><body>
+        <div id="wpwrap"></div>
+        <div class="fs_ticket_body">
+          <h2 class="fs_ticket_title"><span>Dynamic Ajax Product Filter support</span></h2>
+          <div class="fs_threads_container">
+            <article class="fs_conversation_message fs_thread_starter">
+              <span class="fs_message_name">Customer</span>
+              <span class="fs_message_role">(Customer)</span>
+              <div class="fs_message_body">Dynamic Ajax Product Filter is working now. Thanks.</div>
+            </article>
+          </div>
+        </div>
+      </body></html>`
+    })
+  );
+  await page.goto(
+    "https://plugincy.com/wp-admin/admin.php?page=fluent-support#/tickets/62/view"
+  );
+  await injectScraper(page);
+  await page.evaluate(() => {
+    document
+      .getElementById("plugincy-support-rpa-launcher")
+      .shadowRoot.querySelector("button.review")
+      .click();
+  });
+  await page.waitForFunction(() =>
+    window.__rpaMessages.some((message) => message.type === "RPA_CREATE_REVIEW_REQUEST")
+  );
+  const reviewMessage = await page.evaluate(() =>
+    window.__rpaMessages.find((message) => message.type === "RPA_CREATE_REVIEW_REQUEST")
+  );
+  assert.match(reviewMessage.ticket.subject, /Dynamic Ajax Product Filter/);
+  assert.match(reviewMessage.ticket.text, /working now/i);
+
+  await context.close();
+}
+
+async function testCustomReplyLauncher(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    window.__rpaMessages = [];
+    window.prompt = () => "tell them I checked and fixed it";
+    window.chrome = {
+      runtime: {
+        id: "workflow-test",
+        onMessage: { addListener() {} },
+        async sendMessage(payload) {
+          window.__rpaMessages.push(payload);
+          if (payload.type === "RPA_PROCESS_CUSTOM_REPLY") {
+            return { ok: true, accepted: true, status: "queued" };
+          }
+          return { ok: true, accepted: true, opened: true };
+        }
+      }
+    };
+  });
+  await page.route("https://plugincy.com/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `<!doctype html><html><body>
+        <div id="wpwrap"></div>
+        <div class="fs_ticket_body">
+          <h2 class="fs_ticket_title"><span>Checkout follow-up</span></h2>
+          <div class="fs_threads_container">
+            <article class="fs_conversation_message fs_thread_starter">
+              <span class="fs_message_name">Customer</span>
+              <span class="fs_message_role">(Customer)</span>
+              <div class="fs_message_body">Can you confirm if this is fixed?</div>
+            </article>
+          </div>
+        </div>
+      </body></html>`
+    })
+  );
+  await page.goto(
+    "https://plugincy.com/wp-admin/admin.php?page=fluent-support#/tickets/63/view"
+  );
+  await injectScraper(page);
+  await page.evaluate(() => {
+    document
+      .getElementById("plugincy-support-rpa-launcher")
+      .shadowRoot.querySelector("button.custom")
+      .click();
+  });
+  await page.waitForFunction(() =>
+    window.__rpaMessages.some((message) => message.type === "RPA_PROCESS_CUSTOM_REPLY")
+  );
+  const customMessage = await page.evaluate(() =>
+    window.__rpaMessages.find((message) => message.type === "RPA_PROCESS_CUSTOM_REPLY")
+  );
+  assert.equal(customMessage.customReplyText, "tell them I checked and fixed it");
+  assert.match(customMessage.ticket.subject, /Checkout follow-up/);
 
   await context.close();
 }
@@ -231,7 +475,11 @@ async function testChatGptResponseDetection(browser) {
   try {
     await testFluentFixture(browser);
     await testTitanFixture(browser);
+    await testSourceNotifierIgnoresOldTitanMail(browser);
     await testAutoReplyDom(browser);
+    await testFixedReplyLauncher(browser);
+    await testReviewRequestLauncher(browser);
+    await testCustomReplyLauncher(browser);
     await testChatGptFreshConversationGuard(browser);
     await testChatGptResponseDetection(browser);
     console.log("Workflow browser tests passed.");

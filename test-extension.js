@@ -151,6 +151,9 @@ async function run() {
   await dashboard.locator("#product-docs").fill("https://plugincy.com/docs/playwright-smoke-plugin/");
   await dashboard.locator("#product-landing").fill("https://plugincy.com/playwright-smoke-plugin/");
   await dashboard
+    .locator("#product-review")
+    .fill("https://wordpress.org/support/plugin/playwright-smoke-plugin/reviews/#new-post");
+  await dashboard
     .locator("#product-custom-links")
     .fill(
       "Video walkthrough: https://plugincy.com/tutorials/playwright-smoke-plugin-video/\nLive demo: https://demo.plugincy.com/playwright-smoke-plugin/"
@@ -162,6 +165,7 @@ async function run() {
     has: dashboard.getByText(smokeProduct, { exact: true })
   });
   await productCard.waitFor({ state: "visible" });
+  await productCard.getByText("Review").waitFor();
   await productCard.getByText("Video walkthrough").waitFor();
   await productCard.getByText("Live demo").waitFor();
   await productCard.getByRole("button", { name: "Delete" }).click();

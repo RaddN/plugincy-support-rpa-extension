@@ -4,10 +4,13 @@ const assert = require("node:assert/strict");
 const {
   classifyEmail,
   cleanTitanText,
+  createReplySignature,
   createTicketSignature,
   detectSecrets,
+  extractEscalationMarker,
   findDuplicateJob,
   getFluentSupportTicketId,
+  getPendingReplyState,
   recoverTimedOutJob
 } = require("./shared/workflow-core.js");
 
@@ -84,6 +87,31 @@ assert.equal(
   true
 );
 
+const conversation = [
+  "[Customer | Mario | Jun 29, 10:00]",
+  "The filter does not reset after AJAX.",
+  "",
+  "[Support | Plugincy | Jun 29, 10:15]",
+  "Please update the plugin and clear the cache.",
+  "",
+  "[Customer | Mario | Jun 30, 09:20]",
+  "I updated it and the problem still happens on the shop page."
+].join("\n");
+const replyState = getPendingReplyState({ text: conversation });
+assert.equal(replyState.pendingMessageCount, 1);
+assert.match(replyState.pendingText, /problem still happens/);
+assert.doesNotMatch(replyState.pendingText, /Please update the plugin/);
+assert.equal(
+  getPendingReplyState({
+    text: "[Customer | Mario]\nFirst issue\n\n[Support | Plugincy]\nSolved"
+  }).hasPendingCustomer,
+  false
+);
+assert.match(
+  extractEscalationMarker("ESCALATE_TO_HUMAN: Login received for manual QA."),
+  /Login received/
+);
+
 const ticket = {
   source: "fluent-support",
   ticketId: "61",
@@ -94,6 +122,16 @@ const ticket = {
 const signature = createTicketSignature(ticket);
 assert.equal(signature, createTicketSignature({ ...ticket }));
 assert.notEqual(signature, createTicketSignature({ ...ticket, ticketId: "62" }));
+const oldThread = {
+  ...ticket,
+  text: "[Customer]\nInitial bug\n\n[Support]\nPlease send access"
+};
+const credentialThread = {
+  ...ticket,
+  text: `${oldThread.text}\n\n[Customer]\nWP Admin URL: https://example.com/wp-admin/\nUsername: admin\nPassword: secret123`
+};
+assert.notEqual(createReplySignature(oldThread), createReplySignature(credentialThread));
+assert.equal(getPendingReplyState(credentialThread).pendingMessageCount, 1);
 assert.equal(
   findDuplicateJob({ active: { signature }, queue: [] }, signature).status,
   "processing"

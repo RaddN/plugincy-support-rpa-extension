@@ -13,6 +13,7 @@
 
   let scanTimer = 0;
   let lastStateSignature = "";
+  let baselineReported = false;
 
   const observer = new MutationObserver(() => {
     scheduleScan(1200);
@@ -59,16 +60,12 @@
   }
 
   async function reportSourceState() {
-    const fingerprints = collectUnreadFingerprints();
-    const titleCount = extractUnreadCount(document.title);
+    const listView = isNotificationListView();
+    const fingerprints = listView ? collectUnreadFingerprints() : [];
+    const baselineOnly = !baselineReported;
+    baselineReported = true;
 
-    if (!fingerprints.length && titleCount > 0) {
-      for (let index = 1; index <= Math.min(titleCount, MAX_FINGERPRINTS); index += 1) {
-        fingerprints.push(`title-count-${index}`);
-      }
-    }
-
-    const stateSignature = `${SOURCE}|${fingerprints.join("|")}`;
+    const stateSignature = `${SOURCE}|${listView ? "list" : "detail"}|${fingerprints.join("|")}`;
     if (stateSignature === lastStateSignature) {
       return;
     }
@@ -78,11 +75,17 @@
       type: "RPA_REPORT_SOURCE_STATE",
       source: SOURCE,
       fingerprints,
+      baselineOnly,
+      listView,
       pageUrl: location.href
     });
   }
 
   function collectUnreadFingerprints() {
+    if (!isNotificationListView()) {
+      return [];
+    }
+
     const selectors =
       SOURCE === "titan-mail"
         ? [
@@ -119,11 +122,17 @@
         if (!(node instanceof HTMLElement) || !isElementVisible(node)) {
           continue;
         }
+        if (!isUnreadIndicatorNode(node)) {
+          continue;
+        }
 
         const row =
-          node.closest("a[href], [role='row'], tr, li") ||
+          node.closest("[role='row'], tr, li, a[href], [data-testid*='row' i]") ||
           node.parentElement ||
           node;
+        if (!isNotificationRow(row, node)) {
+          continue;
+        }
         const sourceKey = [
           row.getAttribute("href") || "",
           row.id || "",
@@ -144,6 +153,114 @@
     }
 
     return [...fingerprints];
+  }
+
+  function isNotificationListView() {
+    if (SOURCE === "titan-mail") {
+      if (
+        hasVisibleElement([
+          "[data-testid='message-item-area']",
+          ".message-item-area",
+          ".message-item-wrap",
+          "[data-testid='message-body']",
+          "[data-testid*='message-content' i]"
+        ])
+      ) {
+        return false;
+      }
+
+      return hasVisibleElement([
+        "[data-testid*='thread' i]",
+        "[data-testid*='mail-list' i]",
+        "[role='row']",
+        "tr"
+      ]);
+    }
+
+    if (/^#\/tickets\/\d+\/view(?:[/?]|$)/i.test(location.hash || "")) {
+      return false;
+    }
+
+    return hasVisibleElement([
+      "[data-testid*='ticket' i]",
+      "[data-status='new']",
+      "[data-status='unread']",
+      "[role='row']",
+      "tr"
+    ]);
+  }
+
+  function isNotificationRow(row, markerNode) {
+    if (!(row instanceof HTMLElement) || !isElementVisible(row)) {
+      return false;
+    }
+    if (row.closest("header, nav, footer, [role='toolbar'], [role='menubar']")) {
+      return false;
+    }
+
+    const label = normalizeText(
+      [
+        row.getAttribute("aria-label"),
+        row.getAttribute("title"),
+        row.getAttribute("data-testid"),
+        row.innerText || row.textContent
+      ].join(" ")
+    );
+    const markerLabel = normalizeText(
+      [
+        markerNode?.getAttribute?.("aria-label"),
+        markerNode?.getAttribute?.("title"),
+        markerNode?.getAttribute?.("data-testid"),
+        markerNode?.getAttribute?.("class"),
+        markerNode?.textContent
+      ].join(" ")
+    );
+    if (
+      /\b(?:mark as unread|show unread|unread only|filter unread|no unread|read receipt|compose|settings|folder|folders)\b/i.test(label) ||
+      /\b(?:mark as unread|show unread|unread only|filter unread|no unread|read receipt|compose|settings|folder|folders)\b/i.test(markerLabel)
+    ) {
+      return false;
+    }
+
+    const hasUnreadSignal =
+      row.getAttribute("data-unread") === "true" ||
+      markerNode?.getAttribute?.("data-unread") === "true" ||
+      /\b(?:unread|is-unread|new mail|new ticket)\b/i.test(`${label} ${markerLabel}`);
+
+    if (SOURCE === "titan-mail") {
+      return hasUnreadSignal && /\b(?:subject|from|sender|inbox|mail|thread|unread)\b/i.test(
+        `${label} ${markerLabel}`
+      );
+    }
+
+    return hasUnreadSignal && /\b(?:ticket|subject|customer|unread|new|open|waiting)\b/i.test(
+      `${label} ${markerLabel}`
+    );
+  }
+
+  function isUnreadIndicatorNode(node) {
+    const label = normalizeText(
+      [
+        node.getAttribute("aria-label"),
+        node.getAttribute("title"),
+        node.getAttribute("data-testid"),
+        node.textContent
+      ].join(" ")
+    );
+    if (
+      /\b(?:mark as unread|show unread|unread only|filter unread|no unread|read receipt)\b/i.test(
+        label
+      )
+    ) {
+      return false;
+    }
+    if (
+      node.matches("button, [role='button'], input, textarea, select") ||
+      node.closest("button, [role='button']")
+    ) {
+      return node.getAttribute("data-unread") === "true";
+    }
+    return true;
   }
 
   function extractUnreadCount(value) {
@@ -175,6 +292,21 @@
     return rect.width > 2 && rect.height > 2;
   }
 
+  function hasVisibleElement(selectors) {
+    for (const selector of selectors) {
+      try {
+        for (const node of document.querySelectorAll(selector)) {
+          if (node instanceof HTMLElement && isElementVisible(node)) {
+            return true;
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+    return false;
+  }
+
   function normalizeText(value) {
     return String(value || "")
       .replace(/\u00a0/g, " ")
@@ -192,4 +324,10 @@
       // Extension reloads invalidate existing content-script contexts.
     }
   }
+
+  globalThis.PlugincySourceNotifierTest = {
+    collectUnreadFingerprints,
+    extractUnreadCount,
+    isNotificationListView
+  };
 })();

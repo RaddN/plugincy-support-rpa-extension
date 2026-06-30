@@ -101,7 +101,7 @@
       }
 
       if (response.escalated) {
-        setUiState("escalated", "Sensitive data blocked");
+        setUiState("escalated", "Manual task created");
       } else {
         setUiState("processing", "Processing");
       }
@@ -120,6 +120,148 @@
     }
   }
 
+  async function createFixedReplyDraft() {
+    if (captureInProgress) {
+      return {
+        accepted: false,
+        error: "This ticket is already being processed."
+      };
+    }
+    if (!isLikelyTicketDetailOpen()) {
+      throw new Error(
+        PLATFORM === "fluent-support"
+          ? "Open a Fluent Support ticket detail route before processing."
+          : "Open a Titan email before processing."
+      );
+    }
+
+    captureInProgress = true;
+    setUiState("working", "Reading ticket...");
+
+    try {
+      await safeRuntimeSendMessage({ type: "RPA_OPEN_SIDE_PANEL" });
+      const ticket = scrapeCurrentTicket({ requireDetail: true });
+      const response = await safeRuntimeSendMessage({
+        type: "RPA_CREATE_FIXED_REPLY",
+        ticket
+      });
+
+      if (!response?.ok || !response.accepted) {
+        throw new Error(response?.error || "The fixed reply could not be created.");
+      }
+
+      setUiState("draft", "Fixed reply ready");
+      return {
+        accepted: true,
+        source: ticket.source,
+        status: response.status || "draft_ready"
+      };
+    } catch (error) {
+      setUiState("error", error instanceof Error ? error.message : "Fixed reply failed.");
+      throw error;
+    } finally {
+      captureInProgress = false;
+    }
+  }
+
+  async function createReviewRequestDraft() {
+    if (captureInProgress) {
+      return {
+        accepted: false,
+        error: "This ticket is already being processed."
+      };
+    }
+    if (!isLikelyTicketDetailOpen()) {
+      throw new Error(
+        PLATFORM === "fluent-support"
+          ? "Open a Fluent Support ticket detail route before processing."
+          : "Open a Titan email before processing."
+      );
+    }
+
+    captureInProgress = true;
+    setUiState("working", "Reading ticket...");
+
+    try {
+      await safeRuntimeSendMessage({ type: "RPA_OPEN_SIDE_PANEL" });
+      const ticket = scrapeCurrentTicket({ requireDetail: true });
+      const response = await safeRuntimeSendMessage({
+        type: "RPA_CREATE_REVIEW_REQUEST",
+        ticket
+      });
+
+      if (!response?.ok || !response.accepted) {
+        throw new Error(response?.error || "The review request could not be created.");
+      }
+
+      setUiState("draft", "Review request ready");
+      return {
+        accepted: true,
+        source: ticket.source,
+        status: response.status || "draft_ready"
+      };
+    } catch (error) {
+      setUiState("error", error instanceof Error ? error.message : "Review request failed.");
+      throw error;
+    } finally {
+      captureInProgress = false;
+    }
+  }
+
+  async function createCustomReplyDraft() {
+    const customReplyText = normalizeMultiline(
+      window.prompt("Type your rough reply for ChatGPT to polish:") || ""
+    ).slice(0, 3000);
+    if (!customReplyText) {
+      setUiState("ready", "Ready");
+      return { accepted: false, cancelled: true };
+    }
+
+    if (captureInProgress) {
+      return {
+        accepted: false,
+        error: "This ticket is already being processed."
+      };
+    }
+    if (!isLikelyTicketDetailOpen()) {
+      throw new Error(
+        PLATFORM === "fluent-support"
+          ? "Open a Fluent Support ticket detail route before processing."
+          : "Open a Titan email before processing."
+      );
+    }
+
+    captureInProgress = true;
+    setUiState("working", "Reading ticket...");
+
+    try {
+      await safeRuntimeSendMessage({ type: "RPA_OPEN_SIDE_PANEL" });
+      const ticket = scrapeCurrentTicket({ requireDetail: true });
+      setUiState("queued", "Queued");
+      const response = await safeRuntimeSendMessage({
+        type: "RPA_PROCESS_CUSTOM_REPLY",
+        ticket,
+        customReplyText
+      });
+
+      if (!response?.ok || !response.accepted) {
+        throw new Error(response?.error || "The custom reply could not be queued.");
+      }
+
+      setUiState("processing", "Processing");
+      return {
+        accepted: true,
+        source: ticket.source,
+        status: response.status || "queued"
+      };
+    } catch (error) {
+      setUiState("error", error instanceof Error ? error.message : "Custom reply failed.");
+      throw error;
+    } finally {
+      captureInProgress = false;
+    }
+  }
+
   function scrapeCurrentTicket({ requireDetail = true } = {}) {
     if (requireDetail && !isLikelyTicketDetailOpen()) {
       throw new Error("A readable ticket detail view is not open.");
@@ -127,8 +269,11 @@
 
     const subject =
       PLATFORM === "titan-mail" ? extractTitanSubject() : extractFluentSubject();
+    const messages =
+      PLATFORM === "titan-mail" ? extractTitanMessages(subject) : extractFluentMessages();
     const text =
-      PLATFORM === "titan-mail" ? extractTitanConversation() : extractFluentConversation();
+      core?.formatConversationMessages(messages) ||
+      (PLATFORM === "titan-mail" ? extractTitanConversation() : extractFluentConversation());
     if (!text || text.length < 8) {
       throw new Error("No readable ticket conversation was found on this page.");
     }
@@ -144,6 +289,7 @@
       source: PLATFORM,
       ticketId: extractTicketId(),
       customer: extractCustomer(),
+      messages,
       secretTypes: secretResult.found ? secretResult.types : [],
       pageUrl: location.href
     };
@@ -194,6 +340,13 @@
   }
 
   function extractFluentConversation() {
+    return (core?.formatConversationMessages(extractFluentMessages()) || "").slice(
+      0,
+      MAX_CAPTURE_LENGTH
+    );
+  }
+
+  function extractFluentMessages() {
     const messages = [];
     const nodes = [
       ...document.querySelectorAll(
@@ -211,13 +364,25 @@
         node.querySelector(".fs_message_name")?.textContent || "Conversation"
       );
       const role = normalizeText(node.querySelector(".fs_message_role")?.textContent || "");
-      messages.push(`[${name}${role ? ` ${role}` : ""}]\n${text}`);
+      messages.push({
+        role: normalizeConversationRole(role, name),
+        author: name,
+        sentAt: extractMessageTime(node),
+        text
+      });
     }
 
-    return dedupeTextBlocks(messages).join("\n\n").slice(0, MAX_CAPTURE_LENGTH);
+    return dedupeMessages(messages);
   }
 
   function extractTitanConversation() {
+    return (core?.formatConversationMessages(extractTitanMessages()) || "").slice(
+      0,
+      MAX_CAPTURE_LENGTH
+    );
+  }
+
+  function extractTitanMessages(subject = "") {
     const bodies = [];
     const selectors = [
       "[data-testid='message-item-area']",
@@ -239,17 +404,31 @@
           clone.innerText || clone.textContent || ""
         );
         if (cleaned?.length >= 3) {
-          bodies.push(cleaned);
+          bodies.push({
+            role: "customer",
+            author: extractTitanMessageSender(node) || extractCustomer(),
+            sentAt: extractMessageTime(node),
+            text: cleaned
+          });
         }
       }
     }
 
     const iframeText = collectReadableIframeText();
     if (iframeText) {
-      bodies.push(iframeText);
+      bodies.push({
+        role: "customer",
+        author: extractCustomer(),
+        sentAt: "",
+        text: iframeText
+      });
     }
 
-    return dedupeTextBlocks(bodies).join("\n\n").slice(0, MAX_CAPTURE_LENGTH);
+    if (!bodies.length && subject) {
+      return [];
+    }
+
+    return dedupeMessages(bodies);
   }
 
   function cloneTitanBody(node) {
@@ -326,9 +505,105 @@
     return match?.[1] || "";
   }
 
+  function normalizeConversationRole(role, author) {
+    const text = `${normalizeText(role)} ${normalizeText(author)}`;
+    if (/\b(?:support|agent|staff|admin|administrator|operator|developer|team)\b/i.test(text)) {
+      return "support";
+    }
+    if (/\b(?:customer|client|user|requester|sender|visitor|buyer)\b/i.test(text)) {
+      return "customer";
+    }
+    return "unknown";
+  }
+
+  function extractMessageTime(node) {
+    const selectors = [
+      "time",
+      "[datetime]",
+      ".fs_message_time",
+      ".fs_message_date",
+      ".fs_thread_time",
+      ".fs_thread_date",
+      "[class*='time']",
+      "[class*='date']"
+    ];
+    for (const selector of selectors) {
+      const match = node.querySelector(selector);
+      if (!match || !isMeaningfullyVisible(match)) {
+        continue;
+      }
+      const value =
+        match.getAttribute("datetime") ||
+        match.getAttribute("title") ||
+        match.getAttribute("aria-label") ||
+        match.textContent ||
+        "";
+      const text = normalizeText(value);
+      if (text && text.length <= 120) {
+        return text;
+      }
+    }
+    return "";
+  }
+
+  function extractTitanMessageSender(node) {
+    const selectors = [
+      "[data-testid='from-contact-email']",
+      "[data-testid*='sender' i]",
+      "[data-testid*='from' i]",
+      ".from-contact-email",
+      ".message-participants .email-address",
+      ".thread-participant-item",
+      "[class*='sender' i]",
+      "[class*='from' i]"
+    ];
+    for (const selector of selectors) {
+      const text = firstTextWithin(node, selector);
+      if (text) {
+        return text;
+      }
+    }
+    return "";
+  }
+
+  function firstTextWithin(root, selector) {
+    for (const node of root.querySelectorAll(selector)) {
+      if (!isMeaningfullyVisible(node)) {
+        continue;
+      }
+      const text = normalizeText(node.innerText || node.textContent || "");
+      if (text.length >= 2 && text.length <= 160) {
+        return text;
+      }
+    }
+    return "";
+  }
+
+  function dedupeMessages(messages) {
+    const output = [];
+    const seen = new Set();
+    for (const message of messages) {
+      const text = normalizeMultiline(message?.text || "");
+      const key = normalizeText(text).toLowerCase();
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      output.push({
+        role: ["customer", "support", "unknown"].includes(message.role)
+          ? message.role
+          : "unknown",
+        author: normalizeText(message.author || "").slice(0, 120),
+        sentAt: normalizeText(message.sentAt || "").slice(0, 120),
+        text: text.slice(0, MAX_CAPTURE_LENGTH)
+      });
+    }
+    return output;
+  }
+
   async function handleAutomationResult(message) {
     if (message.status === "escalated") {
-      setUiState("escalated", "Sensitive data blocked");
+      setUiState("escalated", "Manual task created");
       return { handled: true, escalated: true };
     }
     if (message.status === "error") {
@@ -553,8 +828,11 @@
       <style>
         .wrap {
           display: flex;
+          flex-wrap: wrap;
           align-items: center;
+          justify-content: flex-end;
           gap: 9px;
+          max-width: min(92vw, 720px);
           padding: 7px;
           border: 1px solid rgba(255,255,255,.38);
           border-radius: 15px;
@@ -573,6 +851,21 @@
           cursor: pointer;
           font: 750 12px/1 inherit;
         }
+        button.secondary {
+          background: rgba(255,255,255,.12);
+          color: #fff;
+        }
+        button.secondary:hover { background: rgba(255,255,255,.18); }
+        button.review {
+          background: #16a34a;
+          color: #fff;
+        }
+        button.review:hover { background: #15803d; }
+        button.custom {
+          background: #7c3aed;
+          color: #fff;
+        }
+        button.custom:hover { background: #6d28d9; }
         button:disabled { cursor: wait; opacity: .66; }
         button:focus-visible { outline: 3px solid rgba(99,168,255,.55); outline-offset: 2px; }
         .status { max-width: 220px; padding-right: 8px; color: #c8d7eb; }
@@ -582,7 +875,10 @@
         .wrap[data-state="escalated"] .status { color: #ffd28a; }
       </style>
       <div class="wrap" data-state="ready">
-        <button type="button">Generate GPT reply</button>
+        <button class="primary" type="button">Generate GPT reply</button>
+        <button class="secondary" type="button">Fixed</button>
+        <button class="review" type="button">5-star</button>
+        <button class="custom" type="button">Custom</button>
         <span class="status" aria-live="polite">Ready</span>
       </div>
     `;
@@ -590,15 +886,23 @@
     ui = {
       host,
       wrap: shadow.querySelector(".wrap"),
-      button: shadow.querySelector("button"),
+      primaryButton: shadow.querySelector("button.primary"),
+      fixedButton: shadow.querySelector("button.secondary"),
+      reviewButton: shadow.querySelector("button.review"),
+      customButton: shadow.querySelector("button.custom"),
       status: shadow.querySelector(".status")
     };
-    ui.button.addEventListener("click", () => {
-      if (["draft", "sent"].includes(ui.wrap.dataset.state)) {
-        void safeRuntimeSendMessage({ type: "RPA_OPEN_SIDE_PANEL" });
-        return;
-      }
+    ui.primaryButton.addEventListener("click", () => {
       void captureAndQueue();
+    });
+    ui.fixedButton.addEventListener("click", () => {
+      void createFixedReplyDraft();
+    });
+    ui.reviewButton.addEventListener("click", () => {
+      void createReviewRequestDraft();
+    });
+    ui.customButton.addEventListener("click", () => {
+      void createCustomReplyDraft();
     });
   }
 
@@ -611,13 +915,16 @@
     }
     ui.wrap.dataset.state = state;
     ui.status.textContent = status;
-    ui.button.disabled = ["working", "queued", "processing"].includes(state);
-    ui.button.textContent =
-      state === "processing"
-        ? "Processing..."
-        : state === "draft"
-          ? "Open Draft Inbox"
-          : "Generate GPT reply";
+    const isBusy = ["working", "queued", "processing"].includes(state);
+    ui.primaryButton.disabled = isBusy;
+    ui.fixedButton.disabled = isBusy;
+    ui.reviewButton.disabled = isBusy;
+    ui.customButton.disabled = isBusy;
+    ui.primaryButton.textContent =
+      state === "processing" ? "Processing..." : "Generate GPT reply";
+    ui.fixedButton.textContent = "Fixed";
+    ui.reviewButton.textContent = "5-star";
+    ui.customButton.textContent = "Custom";
   }
 
   function detectAuthenticatedState() {

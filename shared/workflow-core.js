@@ -79,6 +79,16 @@
       .trim();
   }
 
+  function hashStableText(value) {
+    let hash = 2166136261;
+    const text = String(value || "");
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
   function detectSecrets(...values) {
     const text = values.map((value) => String(value || "")).join("\n");
     const types = [];
@@ -166,15 +176,211 @@
       normalizeText(ticket?.text).slice(0, 1200)
     ].join("|");
 
-    let hash = 2166136261;
-    for (let index = 0; index < sourceKey.length; index += 1) {
-      hash ^= sourceKey.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
+    return `${normalizeText(ticket?.source) || "support"}:${
+      normalizeText(ticket?.ticketId) || "ticket"
+    }:${hashStableText(sourceKey)}`;
+  }
+
+  function createReplySignature(ticket) {
+    const state = getPendingReplyState(ticket);
+    const pendingKey =
+      state.pendingText || normalizeMultiline(ticket?.text).slice(0, 4000);
+    const sourceKey = [
+      normalizeText(ticket?.source),
+      normalizeText(ticket?.ticketId),
+      normalizeText(ticket?.subject),
+      normalizeText(ticket?.pageUrl),
+      normalizeText(pendingKey).slice(0, 4000)
+    ].join("|");
 
     return `${normalizeText(ticket?.source) || "support"}:${
       normalizeText(ticket?.ticketId) || "ticket"
-    }:${(hash >>> 0).toString(36)}`;
+    }:pending:${hashStableText(sourceKey)}`;
+  }
+
+  function getPendingReplyState(ticket) {
+    const messages = normalizeConversationMessages(ticket?.messages, ticket?.text);
+    const conversationText =
+      formatConversationMessages(messages) || normalizeMultiline(ticket?.text);
+    let lastSupportIndex = -1;
+
+    messages.forEach((message, index) => {
+      if (message.role === "support") {
+        lastSupportIndex = index;
+      }
+    });
+
+    const pendingMessages = messages.filter(
+      (message, index) => index > lastSupportIndex && message.role !== "support"
+    );
+    const pendingText =
+      formatConversationMessages(pendingMessages) ||
+      (lastSupportIndex < 0 ? normalizeMultiline(ticket?.text) : "");
+    const lastSupport = lastSupportIndex >= 0 ? messages[lastSupportIndex] : null;
+    const lastMessage = messages.length ? messages[messages.length - 1] : null;
+
+    return {
+      messages,
+      conversationText,
+      pendingMessages,
+      pendingText,
+      pendingMessageCount: pendingMessages.length,
+      hasPendingCustomer: normalizeText(pendingText).length > 0,
+      latestRole: lastMessage?.role || "unknown",
+      latestText: lastMessage?.text || "",
+      lastSupportAt: lastSupport?.sentAt || "",
+      lastSupportText: lastSupport?.text || ""
+    };
+  }
+
+  function normalizeConversationMessages(messages, fallbackText = "") {
+    const normalized = [];
+    if (Array.isArray(messages)) {
+      for (const message of messages) {
+        const text = normalizeMultiline(message?.text);
+        if (text.length < 2) {
+          continue;
+        }
+        normalized.push({
+          role: normalizeMessageRole(message?.role, `${message?.author || ""} ${text}`),
+          author: normalizeText(message?.author).slice(0, 120),
+          sentAt: normalizeText(message?.sentAt || message?.time || "").slice(0, 120),
+          text: text.slice(0, 20000)
+        });
+      }
+    }
+
+    if (normalized.length) {
+      return normalized;
+    }
+
+    return parseConversationMessages(fallbackText);
+  }
+
+  function parseConversationMessages(value) {
+    const text = normalizeMultiline(value);
+    if (!text) {
+      return [];
+    }
+
+    const messages = [];
+    const pattern = /^\[([^\]\n]{1,180})\]\n([\s\S]*?)(?=\n\n\[[^\]\n]{1,180}\]\n|$)/gm;
+    let match;
+    while ((match = pattern.exec(text))) {
+      const header = normalizeText(match[1]);
+      const body = normalizeMultiline(match[2]);
+      if (body.length < 2) {
+        continue;
+      }
+      messages.push({
+        role: normalizeMessageRole(header, body),
+        author: normalizeHeaderAuthor(header),
+        sentAt: normalizeHeaderTime(header),
+        text: body.slice(0, 20000)
+      });
+    }
+
+    if (messages.length) {
+      return messages;
+    }
+
+    return [
+      {
+        role: "unknown",
+        author: "",
+        sentAt: "",
+        text
+      }
+    ];
+  }
+
+  function formatConversationMessages(messages) {
+    if (!Array.isArray(messages) || !messages.length) {
+      return "";
+    }
+
+    return messages
+      .map((message) => {
+        const roleLabel =
+          message.role === "support"
+            ? "Support"
+            : message.role === "customer"
+              ? "Customer"
+              : "Conversation";
+        const headerParts = [
+          roleLabel,
+          normalizeText(message.author).slice(0, 120),
+          normalizeText(message.sentAt).slice(0, 120)
+        ].filter(Boolean);
+        return `[${headerParts.join(" | ")}]\n${normalizeMultiline(message.text)}`;
+      })
+      .filter((entry) => normalizeText(entry).length > 0)
+      .join("\n\n")
+      .slice(0, 200000);
+  }
+
+  function normalizeMessageRole(role, fallback = "") {
+    const primary = normalizeText(role);
+    if (/\b(?:support|agent|staff|admin|administrator|operator|developer|team)\b/i.test(primary)) {
+      return "support";
+    }
+    if (/\b(?:customer|client|user|requester|sender|visitor|buyer)\b/i.test(primary)) {
+      return "customer";
+    }
+
+    const secondary = normalizeText(fallback);
+    if (/\b(?:plugincy support|support team|support agent|staff reply|admin reply)\b/i.test(secondary)) {
+      return "support";
+    }
+    if (/\b(?:from customer|customer reply|client reply|requester reply)\b/i.test(secondary)) {
+      return "customer";
+    }
+    return "unknown";
+  }
+
+  function normalizeHeaderAuthor(header) {
+    const parts = normalizeText(header).split("|").map((part) => part.trim());
+    const first = parts[0] || "";
+    if (isRoleHeader(first) && parts[1] && !looksLikeMessageTime(parts[1])) {
+      return parts[1].slice(0, 120);
+    }
+    return first
+      .replace(/\b(?:customer|support|agent|staff|admin|administrator|operator|developer|team)\b/gi, "")
+      .replace(/[():-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120);
+  }
+
+  function normalizeHeaderTime(header) {
+    const parts = normalizeText(header).split("|").map((part) => part.trim());
+    if (parts.length <= 1) {
+      return "";
+    }
+    if (isRoleHeader(parts[0]) && parts[1] && !looksLikeMessageTime(parts[1])) {
+      return parts.slice(2).join(" | ").slice(0, 120);
+    }
+    return parts.slice(1).join(" | ").slice(0, 120);
+  }
+
+  function isRoleHeader(value) {
+    return /^(?:customer|support|conversation)$/i.test(normalizeText(value));
+  }
+
+  function looksLikeMessageTime(value) {
+    return /\b(?:\d{1,2}:\d{2}|\d{4}|\d{1,2}\s*(?:am|pm)|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|ago|yesterday|today)\b/i.test(
+      normalizeText(value)
+    );
+  }
+
+  function extractEscalationMarker(value) {
+    const match = String(value || "").match(/ESCALATE_TO_HUMAN:\s*([\s\S]+)/i);
+    if (!match) {
+      return "";
+    }
+
+    return redactSecrets(normalizeMultiline(match[1]).slice(0, 500)) ||
+      "Manual developer review required.";
   }
 
   function classifyEmail({ subject = "", text = "" } = {}) {
@@ -333,13 +539,18 @@
   return {
     classifyEmail,
     cleanTitanText,
+    createReplySignature,
     createTicketSignature,
     dedupeTextBlocks,
     detectSecrets,
+    extractEscalationMarker,
     findDuplicateJob,
     getFluentSupportTicketId,
+    getPendingReplyState,
     isFluentSupportTicketUrl,
+    formatConversationMessages,
     normalizeMultiline,
+    normalizeConversationMessages,
     normalizeText,
     recoverTimedOutJob,
     redactSecrets

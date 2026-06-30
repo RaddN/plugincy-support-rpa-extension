@@ -69,6 +69,8 @@ const DEFAULT_PRODUCTS = [
       landingUrl: "https://plugincy.com/dynamic-ajax-product-filters-for-woocommerce/",
       supportUrl: "",
       changelogUrl: "",
+      reviewUrl:
+        "https://wordpress.org/support/plugin/dynamic-ajax-product-filters-for-woocommerce/reviews/#new-post",
       customLinks: [
         {
           label: "Product website",
@@ -96,6 +98,8 @@ const DEFAULT_PRODUCTS = [
       landingUrl: "https://plugincy.com/one-page-checkout-for-woocommerce/",
       supportUrl: "",
       changelogUrl: "",
+      reviewUrl:
+        "https://wordpress.org/support/plugin/one-page-quick-checkout-for-woocommerce/reviews/#new-post",
       customLinks: [
         {
           label: "Product website",
@@ -126,6 +130,8 @@ const DEFAULT_PRODUCTS = [
         "https://plugincy.com/multi-location-product-and-inventory-management-for-woocommerce/",
       supportUrl: "",
       changelogUrl: "",
+      reviewUrl:
+        "https://wordpress.org/support/plugin/multi-location-product-and-inventory-management/reviews/#new-post",
       customLinks: [
         {
           label: "Product website",
@@ -533,6 +539,18 @@ async function routeMessage(message, sender) {
       assertSupportSender(sender);
       return processTicket(message.ticket, sender.tab);
 
+    case "RPA_CREATE_FIXED_REPLY":
+      assertSupportSender(sender);
+      return createFixedReplyDraft(message.ticket, sender.tab);
+
+    case "RPA_CREATE_REVIEW_REQUEST":
+      assertSupportSender(sender);
+      return createReviewRequestDraft(message.ticket, sender.tab);
+
+    case "RPA_PROCESS_CUSTOM_REPLY":
+      assertSupportSender(sender);
+      return processCustomReply(message.ticket, message.customReplyText, sender.tab);
+
     case "RPA_GPT_RESULT":
       assertChatGptSender(sender);
       return handleGptResult(message, sender.tab);
@@ -630,54 +648,6 @@ async function processTicket(rawTicket, originTab, { forceRetry = false } = {}) 
 
   const rawSubject = String(rawTicket.subject || "");
   const rawText = String(rawTicket.text || "");
-  const detectedSecrets = PlugincyWorkflowCore.detectSecrets(rawSubject, rawText);
-  const reportedSecretTypes = Array.isArray(rawTicket.secretTypes)
-    ? rawTicket.secretTypes.map((value) => cleanText(value, 60)).filter(Boolean)
-    : [];
-  const secretResult = {
-    found: detectedSecrets.found || reportedSecretTypes.length > 0,
-    types: uniqueStrings([...detectedSecrets.types, ...reportedSecretTypes])
-  };
-
-  if (secretResult.found) {
-    const safeTicket = normalizeTicket(
-      {
-        ...rawTicket,
-        subject:
-          PlugincyWorkflowCore.redactSecrets(rawSubject) || "Sensitive support ticket",
-        text: "Sensitive access details were blocked before support automation."
-      },
-      originTab
-    );
-    const task = await createEscalationTask({
-      summary: `Sensitive ${secretResult.types.join(
-        ", "
-      )} data was detected. Review the ticket manually; no secret values were copied.`,
-      ticket: safeTicket,
-      reason: "credentials"
-    });
-
-    await logActivity({
-      status: "escalated",
-      title: safeTicket.subject,
-      detail: "Sensitive data was detected locally; the ticket was not sent to ChatGPT.",
-      source: safeTicket.source,
-      sourceUrl: safeTicket.pageUrl
-    });
-
-    await notifyOrigin(safeTicket.originTabId, {
-      status: "escalated",
-      summary: task.title,
-      reason: "credentials"
-    });
-
-    return {
-      accepted: true,
-      escalated: true,
-      reason: "credentials",
-      taskId: task.id
-    };
-  }
 
   if (
     rawTicket.source === "titan-mail" ||
@@ -700,7 +670,72 @@ async function processTicket(rawTicket, originTab, { forceRetry = false } = {}) 
   }
 
   const ticket = await enrichTicketWithProduct(normalizeTicket(rawTicket, originTab));
-  const signature = PlugincyWorkflowCore.createTicketSignature(ticket);
+  const replyState = PlugincyWorkflowCore.getPendingReplyState(ticket);
+  if (!replyState.hasPendingCustomer) {
+    await logActivity({
+      status: "ignored",
+      title: ticket.subject,
+      detail: "No unreplied customer message was found after the latest support reply.",
+      source: ticket.source,
+      sourceUrl: ticket.pageUrl
+    });
+    throw new Error("There is no new customer message after the latest support reply.");
+  }
+
+  const ticketForJob = {
+    ...ticket,
+    conversationText: replyState.conversationText,
+    pendingText: replyState.pendingText,
+    pendingMessageCount: replyState.pendingMessageCount,
+    lastSupportAt: replyState.lastSupportAt,
+    messages: replyState.messages
+  };
+  const pendingSecrets = PlugincyWorkflowCore.detectSecrets(replyState.pendingText);
+  const secretTypes = uniqueStrings(pendingSecrets.types);
+  const pendingEscalation = PlugincyWorkflowCore.extractEscalationMarker(
+    replyState.pendingText
+  );
+
+  if (pendingEscalation || pendingSecrets.found || secretTypes.length > 0) {
+    const reason = pendingEscalation ? "human-marker" : "credentials";
+    const summary =
+      pendingEscalation ||
+      `Customer sent ${secretTypes.join(
+        ", "
+      )} access details. Create a manual follow-up and do not send an automated reply.`;
+    const task = await createEscalationTask({
+      summary,
+      ticket: ticketForJob,
+      reason
+    });
+
+    await logActivity({
+      status: "escalated",
+      title: ticketForJob.subject,
+      detail:
+        reason === "credentials"
+          ? "Customer access details were accepted for support and converted into a manual task."
+          : "An ESCALATE_TO_HUMAN marker was found in the unreplied customer message.",
+      source: ticketForJob.source,
+      sourceUrl: ticketForJob.pageUrl
+    });
+
+    await notifyOrigin(ticketForJob.originTabId, {
+      status: "escalated",
+      summary: task.title,
+      reason,
+      taskId: task.id
+    });
+
+    return {
+      accepted: true,
+      escalated: true,
+      reason,
+      taskId: task.id
+    };
+  }
+
+  const signature = PlugincyWorkflowCore.createReplySignature(ticketForJob);
   const settings = await getSettings();
   const existingDraft = forceRetry ? null : await findDraftBySignature(signature);
   if (existingDraft) {
@@ -719,9 +754,9 @@ async function processTicket(rawTicket, originTab, { forceRetry = false } = {}) 
     id: crypto.randomUUID(),
     signature,
     createdAt: Date.now(),
-    originTabId: ticket.originTabId,
+    originTabId: ticketForJob.originTabId,
     autoSend: settings.autoSendReplies === true,
-    ticket
+    ticket: ticketForJob
   };
 
   const duplicate = await mutateJobState((state) => {
@@ -748,13 +783,13 @@ async function processTicket(rawTicket, originTab, { forceRetry = false } = {}) 
     id: job.id,
     signature,
     status: "queued",
-    ticketUrl: ticket.pageUrl,
-    ticketId: ticket.ticketId,
-    customer: ticket.customer,
-    subject: ticket.subject,
-    product: ticket.product?.name || "",
-    source: ticket.source,
-    ticket,
+    ticketUrl: ticketForJob.pageUrl,
+    ticketId: ticketForJob.ticketId,
+    customer: ticketForJob.customer,
+    subject: ticketForJob.subject,
+    product: ticketForJob.product?.name || "",
+    source: ticketForJob.source,
+    ticket: ticketForJob,
     draftText: "",
     error: "",
     attempts: Number(existingDraft?.attempts || 0) + 1,
@@ -764,10 +799,10 @@ async function processTicket(rawTicket, originTab, { forceRetry = false } = {}) 
 
   await logActivity({
     status: "queued",
-    title: ticket.subject,
+    title: ticketForJob.subject,
     detail: "Ticket queued for ChatGPT drafting.",
-    source: ticket.source,
-    sourceUrl: ticket.pageUrl
+    source: ticketForJob.source,
+    sourceUrl: ticketForJob.pageUrl
   });
 
   void dispatchNextJob();
@@ -779,6 +814,345 @@ async function processTicket(rawTicket, originTab, { forceRetry = false } = {}) 
     draftId: job.id,
     status: "queued"
   };
+}
+
+async function createFixedReplyDraft(rawTicket, originTab) {
+  if (!rawTicket || typeof rawTicket !== "object") {
+    throw new Error("No ticket data was supplied.");
+  }
+
+  const rawSubject = String(rawTicket.subject || "");
+  const rawText = String(rawTicket.text || "");
+  if (
+    rawTicket.source === "titan-mail" ||
+    originTab?.url?.includes("hostinger.titan.email")
+  ) {
+    const classification = PlugincyWorkflowCore.classifyEmail({
+      subject: rawSubject,
+      text: rawText
+    });
+    if (!classification.isSupport) {
+      await logActivity({
+        status: "ignored",
+        title: cleanText(rawSubject || "Titan email", 160),
+        detail: `${classification.reason}; a fixed reply was not created.`,
+        source: "titan-mail",
+        sourceUrl: rawTicket.pageUrl || originTab?.url || ""
+      });
+      throw new Error(`${classification.reason}. This email was excluded from support drafting.`);
+    }
+  }
+
+  const ticket = await enrichTicketWithProduct(normalizeTicket(rawTicket, originTab));
+  const replyState = PlugincyWorkflowCore.getPendingReplyState(ticket);
+  const ticketForDraft = {
+    ...ticket,
+    conversationText: replyState.conversationText,
+    pendingText: replyState.pendingText,
+    pendingMessageCount: replyState.pendingMessageCount,
+    lastSupportAt: replyState.lastSupportAt,
+    messages: replyState.messages
+  };
+  const signature = `${PlugincyWorkflowCore.createReplySignature(ticketForDraft)}:fixed`;
+  const existingDraft = await findDraftBySignature(signature);
+  if (existingDraft) {
+    throw new Error("A fixed reply draft already exists for this ticket. Open Draft Inbox.");
+  }
+
+  const draftId = crypto.randomUUID();
+  const draftText = buildFixedReplyText(ticketForDraft);
+  await saveDraftRecord({
+    id: draftId,
+    signature,
+    status: "draft_ready",
+    ticketUrl: ticketForDraft.pageUrl,
+    ticketId: ticketForDraft.ticketId,
+    customer: ticketForDraft.customer,
+    subject: ticketForDraft.subject,
+    product: ticketForDraft.product?.name || "",
+    source: ticketForDraft.source,
+    ticket: ticketForDraft,
+    draftText,
+    error: "",
+    attempts: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+
+  await notifyOrigin(ticketForDraft.originTabId, {
+    status: "draft",
+    response: "",
+    draftId,
+    signature,
+    autoSend: false
+  });
+
+  await logActivity({
+    status: "draft",
+    title: ticketForDraft.subject,
+    detail: "Fixed-status reply saved in the persistent Draft Inbox.",
+    source: ticketForDraft.source,
+    sourceUrl: ticketForDraft.pageUrl
+  });
+
+  return {
+    accepted: true,
+    escalated: false,
+    draftId,
+    status: "draft_ready"
+  };
+}
+
+async function createReviewRequestDraft(rawTicket, originTab) {
+  if (!rawTicket || typeof rawTicket !== "object") {
+    throw new Error("No ticket data was supplied.");
+  }
+
+  const rawSubject = String(rawTicket.subject || "");
+  const rawText = String(rawTicket.text || "");
+  if (
+    rawTicket.source === "titan-mail" ||
+    originTab?.url?.includes("hostinger.titan.email")
+  ) {
+    const classification = PlugincyWorkflowCore.classifyEmail({
+      subject: rawSubject,
+      text: rawText
+    });
+    if (!classification.isSupport) {
+      await logActivity({
+        status: "ignored",
+        title: cleanText(rawSubject || "Titan email", 160),
+        detail: `${classification.reason}; a review request was not created.`,
+        source: "titan-mail",
+        sourceUrl: rawTicket.pageUrl || originTab?.url || ""
+      });
+      throw new Error(`${classification.reason}. This email was excluded from support drafting.`);
+    }
+  }
+
+  const ticket = await enrichTicketWithProduct(normalizeTicket(rawTicket, originTab));
+  const reviewUrl = ticket.product?.resources?.reviewUrl || "";
+  if (!reviewUrl) {
+    throw new Error("No WordPress.org review link is configured for this matched product.");
+  }
+
+  const replyState = PlugincyWorkflowCore.getPendingReplyState(ticket);
+  const ticketForDraft = {
+    ...ticket,
+    conversationText: replyState.conversationText,
+    pendingText: replyState.pendingText,
+    pendingMessageCount: replyState.pendingMessageCount,
+    lastSupportAt: replyState.lastSupportAt,
+    messages: replyState.messages
+  };
+  const signature = `${PlugincyWorkflowCore.createReplySignature(ticketForDraft)}:review`;
+  const existingDraft = await findDraftBySignature(signature);
+  if (existingDraft) {
+    throw new Error("A review request draft already exists for this ticket. Open Draft Inbox.");
+  }
+
+  const draftId = crypto.randomUUID();
+  const draftText = buildReviewRequestText(ticketForDraft, reviewUrl);
+  await saveDraftRecord({
+    id: draftId,
+    signature,
+    status: "draft_ready",
+    ticketUrl: ticketForDraft.pageUrl,
+    ticketId: ticketForDraft.ticketId,
+    customer: ticketForDraft.customer,
+    subject: ticketForDraft.subject,
+    product: ticketForDraft.product?.name || "",
+    source: ticketForDraft.source,
+    ticket: ticketForDraft,
+    draftText,
+    error: "",
+    attempts: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+
+  await notifyOrigin(ticketForDraft.originTabId, {
+    status: "draft",
+    response: "",
+    draftId,
+    signature,
+    autoSend: false
+  });
+
+  await logActivity({
+    status: "draft",
+    title: ticketForDraft.subject,
+    detail: "Product-specific WordPress.org review request saved in Draft Inbox.",
+    source: ticketForDraft.source,
+    sourceUrl: ticketForDraft.pageUrl
+  });
+
+  return {
+    accepted: true,
+    escalated: false,
+    draftId,
+    status: "draft_ready"
+  };
+}
+
+async function processCustomReply(rawTicket, customReplyText, originTab) {
+  if (!rawTicket || typeof rawTicket !== "object") {
+    throw new Error("No ticket data was supplied.");
+  }
+
+  const customText = PlugincyWorkflowCore.normalizeMultiline(customReplyText).slice(
+    0,
+    3000
+  );
+  if (customText.length < 2) {
+    throw new Error("Type a short custom reply before using this action.");
+  }
+
+  const rawSubject = String(rawTicket.subject || "");
+  const rawText = String(rawTicket.text || "");
+  if (
+    rawTicket.source === "titan-mail" ||
+    originTab?.url?.includes("hostinger.titan.email")
+  ) {
+    const classification = PlugincyWorkflowCore.classifyEmail({
+      subject: rawSubject,
+      text: rawText
+    });
+    if (!classification.isSupport) {
+      await logActivity({
+        status: "ignored",
+        title: cleanText(rawSubject || "Titan email", 160),
+        detail: `${classification.reason}; a custom reply was not sent to ChatGPT.`,
+        source: "titan-mail",
+        sourceUrl: rawTicket.pageUrl || originTab?.url || ""
+      });
+      throw new Error(`${classification.reason}. This email was excluded from support drafting.`);
+    }
+  }
+
+  const ticket = await enrichTicketWithProduct(normalizeTicket(rawTicket, originTab));
+  const replyState = PlugincyWorkflowCore.getPendingReplyState(ticket);
+  const ticketForJob = {
+    ...ticket,
+    conversationText: replyState.conversationText,
+    pendingText: replyState.pendingText,
+    pendingMessageCount: replyState.pendingMessageCount,
+    lastSupportAt: replyState.lastSupportAt,
+    messages: replyState.messages,
+    customReplyText: customText,
+    draftMode: "custom"
+  };
+  const signature = `${PlugincyWorkflowCore.createTicketSignature({
+    ...ticketForJob,
+    text: customText
+  })}:custom`;
+  const settings = await getSettings();
+  const existingDraft = await findDraftBySignature(signature);
+  if (existingDraft) {
+    throw new Error("A custom polished draft already exists for this ticket. Open Draft Inbox or change the custom text.");
+  }
+
+  const job = {
+    id: crypto.randomUUID(),
+    signature,
+    createdAt: Date.now(),
+    originTabId: ticketForJob.originTabId,
+    autoSend: settings.autoSendReplies === true,
+    ticket: ticketForJob
+  };
+
+  const duplicate = await mutateJobState((state) => {
+    const existing = PlugincyWorkflowCore.findDuplicateJob(state, signature);
+    if (existing) {
+      return existing;
+    }
+    if (state.queue.length >= MAX_QUEUE_SIZE) {
+      throw new Error("The automation queue is full. Finish the current ticket first.");
+    }
+    state.queue.push(job);
+    return null;
+  });
+
+  if (duplicate) {
+    throw new Error(
+      duplicate.status === "processing"
+        ? "This custom reply is already being processed."
+        : "This custom reply is already queued."
+    );
+  }
+
+  await saveDraftRecord({
+    id: job.id,
+    signature,
+    status: "queued",
+    ticketUrl: ticketForJob.pageUrl,
+    ticketId: ticketForJob.ticketId,
+    customer: ticketForJob.customer,
+    subject: ticketForJob.subject,
+    product: ticketForJob.product?.name || "",
+    source: ticketForJob.source,
+    ticket: ticketForJob,
+    draftText: "",
+    error: "",
+    attempts: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+
+  await logActivity({
+    status: "queued",
+    title: ticketForJob.subject,
+    detail: "Custom reply queued for ChatGPT polishing.",
+    source: ticketForJob.source,
+    sourceUrl: ticketForJob.pageUrl
+  });
+
+  void dispatchNextJob();
+
+  return {
+    accepted: true,
+    escalated: false,
+    jobId: job.id,
+    draftId: job.id,
+    status: "queued"
+  };
+}
+
+function buildFixedReplyText(ticket) {
+  const name = getCustomerGreetingName(ticket?.customer);
+  return [
+    `Hi${name ? ` ${name}` : ""},`,
+    "",
+    "We have fixed the issue and checked it from our end. You can check now and let us know if everything looks good.",
+    "",
+    "Best regards,",
+    "Plugincy Support"
+  ].join("\n");
+}
+
+function buildReviewRequestText(ticket, reviewUrl) {
+  const name = getCustomerGreetingName(ticket?.customer);
+  const productName = cleanText(ticket?.product?.name || "our plugin", 160);
+  return [
+    `Hi${name ? ` ${name}` : ""},`,
+    "",
+    `If you are happy with our support and ${productName}, a 5-star review on WordPress.org would mean a lot to us.`,
+    "",
+    `You can leave the review here: ${reviewUrl}`,
+    "",
+    "Thank you for supporting our work.",
+    "",
+    "Best regards,",
+    "Plugincy Support Team"
+  ].join("\n");
+}
+
+function getCustomerGreetingName(value) {
+  const text = cleanText(value, 80);
+  if (!text || /@/.test(text)) {
+    return "";
+  }
+  return text.split(/\s+/)[0].replace(/[^a-z.'-]/gi, "").slice(0, 40);
 }
 
 function normalizeTicket(rawTicket, originTab) {
@@ -810,7 +1184,9 @@ function normalizeTicket(rawTicket, originTab) {
     ticketId: cleanText(rawTicket.ticketId || "", 80),
     customer: cleanText(rawTicket.customer || "", 160),
     pageUrl,
-    originTabId: Number(originTab?.id || rawTicket.originTabId || 0)
+    originTabId: Number(originTab?.id || rawTicket.originTabId || 0),
+    messages: PlugincyWorkflowCore.normalizeConversationMessages(rawTicket.messages, text)
+      .slice(0, 80)
   };
 }
 
@@ -926,6 +1302,7 @@ function mergeDefaultProduct(existing, defaults) {
       landingUrl: existing.resources.landingUrl || defaults.resources.landingUrl,
       supportUrl: existing.resources.supportUrl || defaults.resources.supportUrl,
       changelogUrl: existing.resources.changelogUrl || defaults.resources.changelogUrl,
+      reviewUrl: existing.resources.reviewUrl || defaults.resources.reviewUrl,
       customLinks: mergeCustomLinks(
         existing.resources.customLinks,
         defaults.resources.customLinks
@@ -1019,6 +1396,7 @@ function normalizeProductResources(resources) {
     landingUrl: normalizeHttpsUrl(resources.landingUrl, 1000),
     supportUrl: normalizeHttpsUrl(resources.supportUrl, 1000),
     changelogUrl: normalizeHttpsUrl(resources.changelogUrl, 1000),
+    reviewUrl: normalizeHttpsUrl(resources.reviewUrl, 1000),
     customLinks: normalizeCustomLinks(resources.customLinks)
   };
 }
@@ -1434,12 +1812,7 @@ async function failActiveJob(jobId, errorMessage) {
 }
 
 function parseEscalation(responseText) {
-  const match = String(responseText).match(/ESCALATE_TO_HUMAN:\s*([\s\S]+)/i);
-  if (!match) {
-    return "";
-  }
-
-  return redactCredentialValues(cleanText(match[1], 500)) || "Manual developer review required.";
+  return PlugincyWorkflowCore.extractEscalationMarker(responseText);
 }
 
 function redactCredentialValues(text) {
@@ -1456,30 +1829,57 @@ async function createEscalationTask({ summary, ticket, reason }) {
     status: "open",
     source: ticket.source,
     sourceUrl: ticket.pageUrl,
+    ticketId: cleanText(ticket.ticketId || "", 80),
     reason,
+    dedupeKey: createTaskDedupeKey(ticket, reason),
     createdAt: Date.now(),
     completedAt: null
   };
 
-  await upsertLocalTask(task);
-  return task;
+  return upsertLocalTask(task);
 }
 
 async function upsertLocalTask(task) {
   return withTaskLock(async () => {
-    const result = await chrome.storage.local.get(TASK_INDEX_KEY);
+    const result = await chrome.storage.local.get(null);
     const currentIndex = Array.isArray(result[TASK_INDEX_KEY])
       ? result[TASK_INDEX_KEY].filter((id) => typeof id === "string")
       : [];
+    const existingId = currentIndex.find((id) => {
+      const candidate = result[`${TASK_KEY_PREFIX}${id}`];
+      if (!candidate || candidate.status === "done") {
+        return false;
+      }
+      if (task.dedupeKey && candidate.dedupeKey === task.dedupeKey) {
+        return true;
+      }
+      return (
+        candidate.reason === task.reason &&
+        candidate.source === task.source &&
+        candidate.sourceUrl &&
+        candidate.sourceUrl === task.sourceUrl
+      );
+    });
+    const existingTask = existingId ? result[`${TASK_KEY_PREFIX}${existingId}`] : null;
+    const taskToSave = existingTask
+      ? {
+          ...existingTask,
+          ...task,
+          id: existingTask.id,
+          createdAt: Number(existingTask.createdAt || task.createdAt),
+          completedAt: null,
+          status: "open"
+        }
+      : task;
 
-    const nextIndex = [task.id, ...currentIndex.filter((id) => id !== task.id)].slice(
+    const nextIndex = [taskToSave.id, ...currentIndex.filter((id) => id !== taskToSave.id)].slice(
       0,
       MAX_TASKS
     );
 
     await chrome.storage.local.set({
       [TASK_INDEX_KEY]: nextIndex,
-      [`${TASK_KEY_PREFIX}${task.id}`]: task
+      [`${TASK_KEY_PREFIX}${taskToSave.id}`]: taskToSave
     });
 
     const removedIds = currentIndex.filter((id) => !nextIndex.includes(id));
@@ -1488,7 +1888,21 @@ async function upsertLocalTask(task) {
         removedIds.map((id) => `${TASK_KEY_PREFIX}${id}`)
       );
     }
+    return taskToSave;
   });
+}
+
+function createTaskDedupeKey(ticket, reason) {
+  return cleanText(
+    [
+      "support-escalation",
+      reason,
+      ticket.source,
+      ticket.ticketId || "",
+      ticket.pageUrl || ticket.subject
+    ].join("|"),
+    500
+  );
 }
 
 function withTaskLock(operation) {
@@ -2248,13 +2662,19 @@ async function handleSourceStateReport(message, tab) {
   const previousFingerprints = Array.isArray(previous?.fingerprints)
     ? previous.fingerprints
     : [];
-  const newFingerprints = previous
+  const baselineOnly = message.baselineOnly === true || message.listView === false;
+  const newFingerprints = previous && !baselineOnly
     ? fingerprints.filter((fingerprint) => !previousFingerprints.includes(fingerprint))
     : [];
 
   state[source] = {
     fingerprints:
-      fingerprints.length || !previous ? fingerprints : previousFingerprints,
+      message.listView === false && previous
+        ? previousFingerprints
+        : fingerprints.length || !previous
+          ? fingerprints
+          : previousFingerprints,
+    listView: message.listView !== false,
     observedAt: Date.now()
   };
   await chrome.storage.local.set({ [SOURCE_STATE_KEY]: state });
@@ -2281,7 +2701,7 @@ async function handleSourceStateReport(message, tab) {
   }
 
   return {
-    baseline: !previous,
+    baseline: !previous || baselineOnly,
     newItems: newFingerprints.length
   };
 }

@@ -71,6 +71,7 @@
     productDocs: document.getElementById("product-docs"),
     productLanding: document.getElementById("product-landing"),
     productSupport: document.getElementById("product-support"),
+    productReview: document.getElementById("product-review"),
     productCustomLinks: document.getElementById("product-custom-links"),
     productNotes: document.getElementById("product-notes"),
     productSave: document.getElementById("product-save"),
@@ -573,6 +574,7 @@
         landingUrl: safeHttpsUrl(product.resources?.landingUrl || product.landingUrl),
         supportUrl: safeHttpsUrl(product.resources?.supportUrl || product.supportUrl),
         changelogUrl: safeHttpsUrl(product.resources?.changelogUrl || product.changelogUrl),
+        reviewUrl: safeHttpsUrl(product.resources?.reviewUrl || product.reviewUrl),
         customLinks: normalizeCustomLinks(product.resources?.customLinks)
       },
       notes: normalizeMultiline(product.notes).slice(0, 1000),
@@ -603,6 +605,7 @@
         landingUrl: safeHttpsUrl(elements.productLanding.value),
         supportUrl: safeHttpsUrl(elements.productSupport.value),
         changelogUrl: "",
+        reviewUrl: safeHttpsUrl(elements.productReview.value),
         customLinks: parseCustomLinks(elements.productCustomLinks.value)
       },
       notes: normalizeMultiline(elements.productNotes.value).slice(0, 1000),
@@ -680,6 +683,7 @@
     elements.productDocs.value = product.resources.docsUrl;
     elements.productLanding.value = product.resources.landingUrl;
     elements.productSupport.value = product.resources.supportUrl || product.resources.changelogUrl;
+    elements.productReview.value = product.resources.reviewUrl;
     elements.productCustomLinks.value = serializeCustomLinks(product.resources.customLinks);
     elements.productNotes.value = product.notes;
     elements.productSave.textContent = "Update product";
@@ -783,6 +787,7 @@
       ["Landing", product.resources.landingUrl],
       ["Support", product.resources.supportUrl],
       ["Changelog", product.resources.changelogUrl],
+      ["Review", product.resources.reviewUrl],
       ...product.resources.customLinks.map((link) => [link.label, link.url])
     ];
   }
