@@ -316,13 +316,12 @@
         createAction("Create task", () => void createTaskFromDraft(draft))
       );
     }
-    if (draft.ticketUrl) {
-      const open = document.createElement("a");
-      open.href = draft.ticketUrl;
-      open.target = "_blank";
-      open.rel = "noreferrer";
-      open.textContent = "Open ticket";
-      actions.append(open);
+    if (draft.ticketUrl || draft.ticket?.originTabId) {
+      actions.append(
+        createAction(draft.source === "titan-mail" ? "Open Titan" : "Open ticket", () =>
+          void openDraftSource(draft)
+        )
+      );
     }
     if (["failed", "draft_ready", "escalated"].includes(draft.status)) {
       actions.append(createAction("Retry", () => void retryDraft(draft)));
@@ -358,6 +357,22 @@
     }
     showToast("Draft queued for retry.");
     await Promise.all([loadDrafts(), loadQueue()]);
+  }
+
+  async function openDraftSource(draft) {
+    const response = await chrome.runtime.sendMessage({
+      type: "RPA_OPEN_DRAFT_SOURCE",
+      draftId: draft.id
+    });
+    if (!response?.ok) {
+      showToast(response?.error || "Ticket could not be opened.");
+      return;
+    }
+    showToast(
+      response.source === "titan-mail" && !response.exact
+        ? "Titan mailbox opened."
+        : "Ticket opened."
+    );
   }
 
   async function deleteDraft(draft) {

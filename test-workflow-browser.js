@@ -649,6 +649,10 @@ async function testFormattedDraftInbox(browser) {
       customer: "Customer",
       source: "titan-mail",
       status: "draft_ready",
+      ticketUrl: "https://hostinger.titan.email/mail/",
+      ticket: {
+        originTabId: 77
+      },
       draftText:
         "Hi,\n\n1. First item\n2. Second item\n\n```\nconst ready = true;\n```",
       draftHtml:
@@ -658,8 +662,13 @@ async function testFormattedDraftInbox(browser) {
     window.chrome = {
       runtime: {
         async sendMessage(message) {
+          window.__sidepanelMessages = window.__sidepanelMessages || [];
+          window.__sidepanelMessages.push(message);
           if (message.type === "RPA_GET_QUEUE_STATUS") {
             return { ok: true, active: null, queued: 0 };
+          }
+          if (message.type === "RPA_OPEN_DRAFT_SOURCE") {
+            return { ok: true, opened: true, source: "titan-mail", exact: false };
           }
           return { ok: true };
         },
@@ -755,6 +764,16 @@ async function testFormattedDraftInbox(browser) {
   assert.doesNotMatch(result.clipboard.html, /<img|<script|unsafe\(\)/);
   assert.match(result.clipboard.text, /1\. First item/);
   assert.equal(result.sanitized, "<p>Safe</p>");
+  await page.getByRole("button", { name: "Open Titan" }).click();
+  await page.waitForFunction(() =>
+    window.__sidepanelMessages?.some(
+      (message) => message.type === "RPA_OPEN_DRAFT_SOURCE"
+    )
+  );
+  const openMessage = await page.evaluate(() =>
+    window.__sidepanelMessages.find((message) => message.type === "RPA_OPEN_DRAFT_SOURCE")
+  );
+  assert.equal(openMessage.draftId, "draft-1");
   await context.close();
 }
 
@@ -903,6 +922,68 @@ async function testChatGptStructuredResponseAndPartialStreamGuard(browser) {
   });
   assert.equal(streamed.response.text, "Hi, this is the complete response.");
   assert.ok(streamed.elapsed >= 6000);
+
+  const hiddenCapture = await page.evaluate(async () => {
+    document.querySelector("[data-message-author-role='assistant']")?.remove();
+    const sentMessages = [];
+    window.chrome.runtime.sendMessage = async (payload) => {
+      sentMessages.push(payload);
+      return { ok: true, focused: true };
+    };
+
+    let hidden = true;
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get() {
+        return hidden;
+      }
+    });
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get() {
+        return hidden ? "hidden" : "visible";
+      }
+    });
+
+    const baseline = window.PlugincyGptControllerTest.getAssistantSnapshot();
+    setTimeout(() => {
+      const reply = document.createElement("article");
+      reply.dataset.messageAuthorRole = "assistant";
+      reply.innerHTML = `
+        <div class="markdown"><p>Hi</p></div>
+        <button data-testid="copy-turn-action-button" type="button">Copy</button>
+      `;
+      document.querySelector("main").append(reply);
+      setTimeout(() => {
+        reply.querySelector(".markdown").innerHTML =
+          "<p>Hi, this complete response should be captured only when visible.</p>";
+      }, 3000);
+      setTimeout(() => {
+        hidden = false;
+        document.dispatchEvent(new Event("visibilitychange"));
+      }, 5600);
+    }, 100);
+
+    const startedAt = Date.now();
+    const response = await window.PlugincyGptControllerTest.waitForCompletedResponse(
+      baseline
+    );
+    return {
+      response,
+      elapsed: Date.now() - startedAt,
+      sentMessages
+    };
+  });
+  assert.equal(
+    hiddenCapture.response.text,
+    "Hi, this complete response should be captured only when visible."
+  );
+  assert.ok(hiddenCapture.elapsed >= 7000);
+  assert.ok(
+    hiddenCapture.sentMessages.some(
+      (message) => message.type === "RPA_GPT_FOCUS_REQUIRED"
+    )
+  );
   await context.close();
 }
 

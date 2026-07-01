@@ -560,6 +560,11 @@ async function routeMessage(message, sender) {
       assertChatGptSender(sender);
       return handleGptError(message);
 
+    case "RPA_GPT_FOCUS_REQUIRED":
+      assertChatGptSender(sender);
+      await focusTab(sender.tab);
+      return { focused: true };
+
     case "RPA_PROCESS_CURRENT_TICKET":
       return processCurrentSupportTab();
 
@@ -574,6 +579,9 @@ async function routeMessage(message, sender) {
 
     case "RPA_RETRY_DRAFT":
       return retryDraft(message.draftId);
+
+    case "RPA_OPEN_DRAFT_SOURCE":
+      return openDraftSource(message.draftId);
 
     case "RPA_DELETE_DRAFT":
       return deleteDraft(message.draftId);
@@ -623,6 +631,91 @@ async function openSidePanel(tab) {
     throw new Error("The support window could not be identified.");
   }
   await chrome.sidePanel.open({ windowId });
+}
+
+async function focusTab(tab, updateProperties = {}) {
+  const tabId = Number(tab?.id || 0);
+  if (!tabId) {
+    throw new Error("The tab could not be identified.");
+  }
+  const updated = await chrome.tabs.update(tabId, {
+    ...updateProperties,
+    active: true
+  });
+  if (Number.isInteger(updated.windowId)) {
+    await chrome.windows.update(updated.windowId, { focused: true });
+  }
+  return updated;
+}
+
+async function openDraftSource(draftId) {
+  const id = cleanText(draftId, 80);
+  if (!id) {
+    throw new Error("Draft ID is required.");
+  }
+
+  const key = `${DRAFT_KEY_PREFIX}${id}`;
+  const result = await chrome.storage.local.get(key);
+  const draft = result[key];
+  if (!draft || typeof draft !== "object") {
+    throw new Error("The saved draft could not be found.");
+  }
+
+  const source = draft.source === "titan-mail" ? "titan-mail" : "fluent-support";
+  const ticketUrl =
+    normalizeSupportUrl(draft.ticketUrl) ||
+    (source === "titan-mail"
+      ? "https://hostinger.titan.email/mail/"
+      : "https://plugincy.com/wp-admin/admin.php?page=fluent-support#/tickets");
+  const originTabId = Number(draft.ticket?.originTabId || 0);
+
+  if (originTabId > 0) {
+    try {
+      const originTab = await chrome.tabs.get(originTabId);
+      const expectedHost =
+        source === "titan-mail"
+          ? "https://hostinger.titan.email/"
+          : "https://plugincy.com/wp-admin/admin.php";
+      if (originTab.url?.startsWith(expectedHost)) {
+        const update =
+          source === "fluent-support" && ticketUrl ? { url: ticketUrl } : {};
+        await focusTab(originTab, update);
+        return {
+          opened: true,
+          source,
+          exact: source === "fluent-support"
+        };
+      }
+    } catch {
+      // The original support tab was closed; fall back to the best available URL.
+    }
+  }
+
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find((tab) => {
+    if (source === "titan-mail") {
+      return tab.url?.startsWith("https://hostinger.titan.email/");
+    }
+    return ticketUrl && tab.url === ticketUrl;
+  });
+
+  if (existing?.id) {
+    await focusTab(existing, source === "fluent-support" ? { url: ticketUrl } : {});
+  } else {
+    const created = await chrome.tabs.create({
+      url: ticketUrl,
+      active: true
+    });
+    if (Number.isInteger(created.windowId)) {
+      await chrome.windows.update(created.windowId, { focused: true });
+    }
+  }
+
+  return {
+    opened: true,
+    source,
+    exact: source === "fluent-support"
+  };
 }
 
 function assertSupportSender(sender, { requireTicket = true } = {}) {
@@ -1578,7 +1671,7 @@ async function dispatchNextJob() {
         status: "processing",
         error: ""
       });
-      const gptTab = await findOrCreateChatGptTab({ active: !job.autoSend });
+      const gptTab = await findOrCreateChatGptTab({ active: true });
       await ensureContentScript(
         gptTab.id,
         ["content/prompt-builder.js", "content/gpt-controller.js"],
@@ -1649,9 +1742,10 @@ async function findOrCreateChatGptTab({ active = false } = {}) {
       active,
       autoDiscardable: false
     });
-    if (active && Number.isInteger(tab.windowId)) {
-      await chrome.windows.update(tab.windowId, { focused: true });
-    }
+  }
+
+  if (active && Number.isInteger(tab.windowId)) {
+    await chrome.windows.update(tab.windowId, { focused: true });
   }
 
   await waitForTabComplete(tab.id);

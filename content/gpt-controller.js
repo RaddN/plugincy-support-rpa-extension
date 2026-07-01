@@ -11,6 +11,9 @@
   const GENERATION_FINISHED_STABLE_MS = 3500;
   const VISIBLE_FALLBACK_STABLE_MS = 10000;
   const HIDDEN_FALLBACK_STABLE_MS = 15000;
+  const VISIBLE_CAPTURE_STABLE_MS = 1800;
+  const MIN_COMPLETED_RESPONSE_CHARS = 20;
+  const FOCUS_REQUEST_INTERVAL_MS = 3000;
   const MAX_RESPONSE_HTML_LENGTH = 60000;
   const DROP_RESPONSE_TAGS = new Set(["IFRAME", "OBJECT", "SCRIPT", "STYLE"]);
   const SAFE_RESPONSE_TAGS = new Set([
@@ -45,6 +48,7 @@
     "UL"
   ]);
   let activeJobId = null;
+  let lastFocusRequestAt = 0;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message.type !== "string") {
@@ -263,11 +267,13 @@
       const startedAt = Date.now();
       let latestText = "";
       let stableSince = 0;
+      let visibleSince = document.hidden ? 0 : Date.now();
       let sawGeneration = false;
       let settled = false;
 
       const cleanup = () => {
         observer.disconnect();
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
         clearInterval(interval);
         clearTimeout(timeout);
       };
@@ -279,6 +285,13 @@
         settled = true;
         cleanup();
         callback(value);
+      };
+
+      const handleVisibilityChange = () => {
+        if (!document.hidden) {
+          visibleSince = Date.now();
+        }
+        evaluate();
       };
 
       const evaluate = () => {
@@ -322,7 +335,22 @@
           (sendReady && stableFor >= fallbackStableMs);
 
         if (!generating && completed) {
-          finish(resolve, extractAssistantResponse(latestElement));
+          const response = extractAssistantResponse(latestElement);
+          if (!isCompleteResponseCandidate(response.text)) {
+            return;
+          }
+
+          if (document.hidden) {
+            requestChatGptTabFocus();
+            stableSince = Date.now();
+            return;
+          }
+
+          if (!visibleSince || Date.now() - visibleSince < VISIBLE_CAPTURE_STABLE_MS) {
+            return;
+          }
+
+          finish(resolve, response);
         }
       };
 
@@ -346,6 +374,7 @@
         );
       }, RESPONSE_TIMEOUT_MS);
 
+      document.addEventListener("visibilitychange", handleVisibilityChange);
       evaluate();
     });
   }
@@ -550,6 +579,22 @@
         "button[aria-label*='Bad response' i]"
       ].some((selector) => [...turn.querySelectorAll(selector)].some(isVisible))
     );
+  }
+
+  function isCompleteResponseCandidate(text) {
+    return normalizeDraftText(text).length >= MIN_COMPLETED_RESPONSE_CHARS;
+  }
+
+  function requestChatGptTabFocus() {
+    const now = Date.now();
+    if (now - lastFocusRequestAt < FOCUS_REQUEST_INTERVAL_MS) {
+      return;
+    }
+    lastFocusRequestAt = now;
+    void safeRuntimeSendMessage({
+      type: "RPA_GPT_FOCUS_REQUIRED",
+      jobId: activeJobId || ""
+    });
   }
 
   function findPromptComposer() {
