@@ -7,6 +7,43 @@
   globalThis.__plugincySupportRpaGptControllerLoaded = true;
 
   const RESPONSE_TIMEOUT_MS = 4 * 60 * 1000;
+  const COMPLETION_STABLE_MS = 2200;
+  const GENERATION_FINISHED_STABLE_MS = 3500;
+  const VISIBLE_FALLBACK_STABLE_MS = 10000;
+  const HIDDEN_FALLBACK_STABLE_MS = 15000;
+  const MAX_RESPONSE_HTML_LENGTH = 60000;
+  const DROP_RESPONSE_TAGS = new Set(["IFRAME", "OBJECT", "SCRIPT", "STYLE"]);
+  const SAFE_RESPONSE_TAGS = new Set([
+    "A",
+    "B",
+    "BLOCKQUOTE",
+    "BR",
+    "CODE",
+    "DEL",
+    "EM",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "HR",
+    "I",
+    "LI",
+    "OL",
+    "P",
+    "PRE",
+    "S",
+    "STRONG",
+    "TABLE",
+    "TBODY",
+    "TD",
+    "TH",
+    "THEAD",
+    "TR",
+    "U",
+    "UL"
+  ]);
   let activeJobId = null;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -65,7 +102,8 @@
       await safeRuntimeSendMessage({
         type: "RPA_GPT_RESULT",
         jobId: job.id,
-        response
+        response: response.text,
+        responseHtml: response.html
       });
     } catch (error) {
       if (activeJobId === job.id) {
@@ -273,8 +311,18 @@
             !sendButton.disabled &&
             sendButton.getAttribute("aria-disabled") !== "true"
         );
-        if (!generating && stableFor >= 2200 && (sawGeneration || sendReady)) {
-          finish(resolve, currentText);
+        const completionVisible = hasCompletedTurnAction(latestElement);
+        const generationFinished = sawGeneration && !generating;
+        const fallbackStableMs = document.hidden
+          ? HIDDEN_FALLBACK_STABLE_MS
+          : VISIBLE_FALLBACK_STABLE_MS;
+        const completed =
+          (completionVisible && stableFor >= COMPLETION_STABLE_MS) ||
+          (generationFinished && stableFor >= GENERATION_FINISHED_STABLE_MS) ||
+          (sendReady && stableFor >= fallbackStableMs);
+
+        if (!generating && completed) {
+          finish(resolve, extractAssistantResponse(latestElement));
         }
       };
 
@@ -331,14 +379,177 @@
   }
 
   function extractAssistantText(element) {
+    return extractAssistantResponse(element).text;
+  }
+
+  function extractAssistantResponse(element) {
     if (!(element instanceof HTMLElement)) {
-      return "";
+      return {
+        text: "",
+        html: ""
+      };
     }
 
     const content =
       element.querySelector(".markdown, [class*='markdown'], [data-message-content]") ||
       element;
-    return normalizeText(content.innerText || content.textContent || "");
+    const safeContainer = document.createElement("div");
+    appendSafeResponseChildren(content, safeContainer);
+    const html = safeContainer.innerHTML.trim();
+
+    return {
+      text: structuredResponseText(content),
+      html: html.length <= MAX_RESPONSE_HTML_LENGTH ? html : ""
+    };
+  }
+
+  function appendSafeResponseChildren(source, target) {
+    for (const child of source.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        target.append(document.createTextNode(child.textContent || ""));
+        continue;
+      }
+      if (!(child instanceof HTMLElement)) {
+        continue;
+      }
+      if (DROP_RESPONSE_TAGS.has(child.tagName)) {
+        continue;
+      }
+
+      if (!SAFE_RESPONSE_TAGS.has(child.tagName)) {
+        appendSafeResponseChildren(child, target);
+        continue;
+      }
+
+      const safe = document.createElement(child.tagName.toLowerCase());
+      if (child.tagName === "A") {
+        const href = normalizeSafeLink(child.getAttribute("href"));
+        if (href) {
+          safe.setAttribute("href", href);
+        }
+      }
+      appendSafeResponseChildren(child, safe);
+      target.append(safe);
+    }
+  }
+
+  function normalizeSafeLink(value) {
+    try {
+      const url = new URL(String(value || ""), location.href);
+      return ["http:", "https:"].includes(url.protocol) ? url.href.slice(0, 2000) : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function structuredResponseText(root) {
+    return normalizeDraftText(formatResponseNode(root));
+  }
+
+  function formatResponseNode(node, depth = 0) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return node.textContent || "";
+    }
+    if (!(node instanceof HTMLElement)) {
+      return "";
+    }
+
+    if (node.tagName === "BR") {
+      return "\n";
+    }
+    if (node.tagName === "PRE") {
+      const code = String(node.textContent || "").replace(/\r\n?/g, "\n").trimEnd();
+      return code ? `\n\`\`\`\n${code}\n\`\`\`\n\n` : "";
+    }
+    if (node.tagName === "OL" || node.tagName === "UL") {
+      const ordered = node.tagName === "OL";
+      const items = [...node.children].filter((child) => child.tagName === "LI");
+      return `${items
+        .map((item, index) => {
+          const indent = "  ".repeat(depth);
+          const marker = ordered ? `${index + 1}.` : "-";
+          const direct = normalizeInlineText(
+            [...item.childNodes]
+              .filter(
+                (child) =>
+                  !(child instanceof HTMLElement) ||
+                  !["OL", "UL"].includes(child.tagName)
+              )
+              .map((child) => formatResponseNode(child, depth))
+              .join("")
+          );
+          const nested = [...item.children]
+            .filter((child) => ["OL", "UL"].includes(child.tagName))
+            .map((child) => formatResponseNode(child, depth + 1).trimEnd())
+            .filter(Boolean)
+            .join("\n");
+          return `${indent}${marker} ${direct}${nested ? `\n${nested}` : ""}`.trimEnd();
+        })
+        .join("\n")}\n\n`;
+    }
+    if (node.tagName === "TABLE") {
+      return `${[...node.querySelectorAll("tr")]
+        .map((row) =>
+          [...row.querySelectorAll(":scope > th, :scope > td")]
+            .map((cell) => normalizeInlineText(cell.textContent || ""))
+            .join(" | ")
+        )
+        .filter(Boolean)
+        .join("\n")}\n\n`;
+    }
+
+    const content = [...node.childNodes]
+      .map((child) => formatResponseNode(child, depth))
+      .join("");
+    if (node.tagName === "BLOCKQUOTE") {
+      return `${normalizeDraftText(content)
+        .split("\n")
+        .map((line) => `> ${line}`)
+        .join("\n")}\n\n`;
+    }
+    if (
+      ["P", "DIV", "SECTION", "ARTICLE", "H1", "H2", "H3", "H4", "H5", "H6"].includes(
+        node.tagName
+      )
+    ) {
+      return `${content}\n\n`;
+    }
+    if (node.tagName === "HR") {
+      return "\n---\n\n";
+    }
+    return content;
+  }
+
+  function normalizeInlineText(value) {
+    return String(value || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/[ \t]*\n[ \t]*/g, " ")
+      .replace(/[ \t]{2,}/g, " ")
+      .trim();
+  }
+
+  function normalizeDraftText(value) {
+    return String(value || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\r\n?/g, "\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function hasCompletedTurnAction(element) {
+    if (!(element instanceof HTMLElement)) {
+      return false;
+    }
+    const turn = element.closest("article") || element;
+    return Boolean(
+      [
+        "button[data-testid='copy-turn-action-button']",
+        "button[aria-label='Copy response']",
+        "button[aria-label*='Good response' i]",
+        "button[aria-label*='Bad response' i]"
+      ].some((selector) => [...turn.querySelectorAll(selector)].some(isVisible))
+    );
   }
 
   function findPromptComposer() {
@@ -420,7 +631,9 @@
   }
 
   globalThis.PlugincyGptControllerTest = {
+    extractAssistantResponse,
     getAssistantSnapshot,
+    hasCompletedTurnAction,
     prepareFreshConversation,
     waitForCompletedResponse
   };

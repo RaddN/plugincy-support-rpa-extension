@@ -96,6 +96,11 @@ for (const requiredDashboardText of ["Google apps", "Google account", "Gmail", "
     throw new Error(`dashboard/newtab.html is missing the Chrome-default shortcut: ${requiredDashboardText}.`);
   }
 }
+for (const badgeId of ["fluent-support-badge", "titan-mail-badge"]) {
+  if (!dashboardHtml.includes(`id="${badgeId}"`)) {
+    throw new Error(`dashboard/newtab.html is missing the source badge: ${badgeId}.`);
+  }
+}
 
 for (const file of [
   "background.js",

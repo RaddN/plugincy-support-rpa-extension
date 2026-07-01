@@ -10,8 +10,10 @@
     location.hostname === "hostinger.titan.email" ? "titan-mail" : "fluent-support";
   const MAX_FINGERPRINTS = 50;
   const SCAN_INTERVAL_MS = 15000;
+  const FLUENT_REFRESH_INTERVAL_MS = 30000;
 
   let scanTimer = 0;
+  let lastFluentRefreshAt = 0;
   let lastStateSignature = "";
   let baselineReported = false;
 
@@ -45,9 +47,20 @@
 
     scheduleScan(2500);
     window.setInterval(() => scheduleScan(0), SCAN_INTERVAL_MS);
+    if (SOURCE === "fluent-support") {
+      window.setTimeout(() => {
+        void refreshFluentSupport();
+      }, 5000);
+      window.setInterval(() => {
+        void refreshFluentSupport();
+      }, FLUENT_REFRESH_INTERVAL_MS);
+    }
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
         scheduleScan(500);
+        if (SOURCE === "fluent-support") {
+          void refreshFluentSupport();
+        }
       }
     });
   }
@@ -62,10 +75,11 @@
   async function reportSourceState() {
     const listView = isNotificationListView();
     const fingerprints = listView ? collectUnreadFingerprints() : [];
+    const unreadCount = getUnreadCount(fingerprints);
     const baselineOnly = !baselineReported;
     baselineReported = true;
 
-    const stateSignature = `${SOURCE}|${listView ? "list" : "detail"}|${fingerprints.join("|")}`;
+    const stateSignature = `${SOURCE}|${listView ? "list" : "detail"}|${unreadCount}|${fingerprints.join("|")}`;
     if (stateSignature === lastStateSignature) {
       return;
     }
@@ -75,6 +89,7 @@
       type: "RPA_REPORT_SOURCE_STATE",
       source: SOURCE,
       fingerprints,
+      unreadCount,
       baselineOnly,
       listView,
       pageUrl: location.href
@@ -94,7 +109,8 @@
             "[aria-label*='unread' i]",
             "[aria-label*='new mail' i]",
             "[class~='unread']",
-            "[class*='is-unread' i]"
+            "[class*='is-unread' i]",
+            "[class*='unread-true' i]"
           ]
         : [
             "[data-testid*='unread' i]",
@@ -102,6 +118,8 @@
             "[data-unread='true']",
             "[data-status='new']",
             "[data-status='unread']",
+            "[class*='fs_status_new' i]",
+            "[class*='fs_ticket_new' i]",
             "[aria-label*='unread' i]",
             "[aria-label*='new ticket' i]",
             "[class~='unread']",
@@ -127,7 +145,9 @@
         }
 
         const row =
-          node.closest("[role='row'], tr, li, a[href], [data-testid*='row' i]") ||
+          node.closest(
+            "[role='row'], tr, li, a[href], [data-testid='list-item'], [data-testid*='row' i], .list-item, .fs_ticket_item"
+          ) ||
           node.parentElement ||
           node;
         if (!isNotificationRow(row, node)) {
@@ -157,21 +177,18 @@
 
   function isNotificationListView() {
     if (SOURCE === "titan-mail") {
-      if (
-        hasVisibleElement([
-          "[data-testid='message-item-area']",
-          ".message-item-area",
-          ".message-item-wrap",
-          "[data-testid='message-body']",
-          "[data-testid*='message-content' i]"
-        ])
-      ) {
+      if (isTitanMessageDetailView()) {
         return false;
       }
 
       return hasVisibleElement([
-        "[data-testid*='thread' i]",
         "[data-testid*='mail-list' i]",
+        "[data-testid*='mail-row' i]",
+        "[data-testid*='thread-list' i]",
+        "[data-testid*='thread-row' i]",
+        "[data-testid='inbox-container']",
+        "[data-testid='list-item']",
+        ".list-rows",
         "[role='row']",
         "tr"
       ]);
@@ -182,11 +199,35 @@
     }
 
     return hasVisibleElement([
+      ".fs_tickets_list",
+      ".fs_ticket_item",
       "[data-testid*='ticket' i]",
       "[data-status='new']",
       "[data-status='unread']",
       "[role='row']",
       "tr"
+    ]);
+  }
+
+  function isTitanMessageDetailView() {
+    return hasVisibleElement([
+      "[data-testid='message-subject']",
+      ".message-subject",
+      ".message-subject-wrap .subject",
+      "[class*='message-subject']",
+      "[data-testid='message-item-area']",
+      ".message-item-area",
+      ".message-item-wrap",
+      "[data-testid='message-body']",
+      "[data-testid*='message-content' i]",
+      "[data-testid='from-contact-email']",
+      ".from-contact-email",
+      "[data-testid='footer-reply-area']",
+      ".footer-reply-area",
+      "[data-testid*='reply-button']",
+      "[data-testid='composer-body']",
+      "[data-testid*='composer']",
+      ".composer"
     ]);
   }
 
@@ -260,7 +301,66 @@
     ) {
       return node.getAttribute("data-unread") === "true";
     }
+    if (
+      SOURCE === "titan-mail" &&
+      node.getAttribute("data-testid") === "thread-unread-icon" &&
+      node.getAttribute("data-unread") !== "true" &&
+      !/\b(?:unread-true|is-unread|new-mail)\b/i.test(node.getAttribute("class") || "")
+    ) {
+      return false;
+    }
     return true;
+  }
+
+  function getUnreadCount(fingerprints = collectUnreadFingerprints()) {
+    const titleCount = extractUnreadCount(document.title);
+    if (SOURCE === "fluent-support") {
+      const newFilterActive = [...document.querySelectorAll(".fs_segment_active")].some(
+        (node) => /^new$/i.test(normalizeText(node.textContent))
+      );
+      if (newFilterActive) {
+        return Math.min(
+          Math.max(fingerprints.length, document.querySelectorAll(".fs_ticket_item").length),
+          MAX_FINGERPRINTS
+        );
+      }
+    }
+    return Math.min(Math.max(fingerprints.length, titleCount), MAX_FINGERPRINTS);
+  }
+
+  async function refreshFluentSupport() {
+    if (SOURCE !== "fluent-support") {
+      return false;
+    }
+    if (Date.now() - lastFluentRefreshAt < 5000 || hasOpenFluentReplyEditor()) {
+      return false;
+    }
+
+    const refresh = [...document.querySelectorAll("button.fs_refresh_btn, .fs_refresh_btn")].find(
+      (button) =>
+        button instanceof HTMLElement &&
+        isElementVisible(button) &&
+        !button.disabled &&
+        button.getAttribute("aria-disabled") !== "true"
+    );
+    if (!refresh) {
+      return false;
+    }
+
+    lastFluentRefreshAt = Date.now();
+    refresh.click();
+    scheduleScan(1800);
+    return true;
+  }
+
+  function hasOpenFluentReplyEditor() {
+    return hasVisibleElement([
+      ".fs_reply_box",
+      ".fs_response_editor",
+      ".ql-editor[contenteditable='true']",
+      ".fs_reply_box textarea",
+      "[role='textbox'][contenteditable='true']"
+    ]);
   }
 
   function extractUnreadCount(value) {
@@ -328,6 +428,9 @@
   globalThis.PlugincySourceNotifierTest = {
     collectUnreadFingerprints,
     extractUnreadCount,
-    isNotificationListView
+    getUnreadCount,
+    hasOpenFluentReplyEditor,
+    isNotificationListView,
+    refreshFluentSupport
   };
 })();

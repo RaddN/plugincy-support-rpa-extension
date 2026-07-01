@@ -12,6 +12,7 @@ No API key is used. The extension operates through page DOM content scripts in y
   - Up to 12 WordPress and WooCommerce developer RSS updates with a short-summary share action (or clipboard fallback).
   - A WordPress.org checker for the three Plugincy plugins, with a 30-day release deadline, active installs, ratings, support totals, and recent new support/rating activity.
   - Desktop notifications for newly detected Fluent Support tickets, Titan unread mail, and new WordPress.org plugin ratings/reviews or support topics.
+  - Live unread/new-count badges on the Fluent Support and Titan navigation links.
   - Recent automation activity.
   - Open-tab/session health indicators.
   - Police Line, Cumilla weather and umbrella dates when rain probability is above 40%.
@@ -20,12 +21,12 @@ No API key is used. The extension operates through page DOM content scripts in y
 - Support-page scraper for:
   - `https://plugincy.com/wp-admin/admin.php?page=fluent-support#/tickets`
   - `https://hostinger.titan.email/mail/`
-- ChatGPT DOM controller with a serialized job queue and completion `MutationObserver`.
+- ChatGPT DOM controller with a serialized job queue, completion `MutationObserver`, inactive-tab-safe completion gating, and semantic response capture.
 - Product repositories, documentation, landing pages, and other configured URLs are analysis references. The prompt uses them to verify code and product behavior; it does not automatically expose them as customer-facing quick links.
 - Pending-message detection so ChatGPT replies only to customer messages that arrived after the latest support reply.
 - Credential/access-message handling. Customer-provided temporary login, hosting, FTP/SFTP/SSH, database, license, or other access details are accepted as support context and converted into one local manual task when they are the latest unreplied customer update.
 - AI escalation handling. `ESCALATE_TO_HUMAN: ...` results, or the same marker in an unreplied mail message, become high-priority local tasks instead of replies.
-- Persistent native Chrome side panel with Draft Inbox, editable replies, copy/retry/delete actions, ticket links, and local tasks.
+- Persistent native Chrome side panel with a formatted Draft Inbox, editable replies, rich clipboard copy, retry/delete actions, ticket links, and local tasks.
 - Professional auto-reply is opt-in and off by default. It revalidates the same open ticket, waits through a safety delay, and keeps the draft when insertion or sending cannot be confirmed safely.
 - Persistent-profile Playwright smoke test.
 
@@ -50,8 +51,8 @@ The extension creates and reuses its own pinned ChatGPT tab during ticket proces
    Use **Fixed** when the issue has already been fixed and checked from your end; it saves a ready-made follow-up draft without using ChatGPT.
    Use **5-star** when you want to ask a happy customer for a product-specific WordPress.org review; the review link comes from the matched product library record.
    Use **Custom** to type a short rough reply and let ChatGPT polish it into a professional support response.
-3. ChatGPT opens in its real browser tab so you can review, edit, or continue prompting there.
-4. The completed result is saved in **Draft Inbox**. Copy/edit it there, or enable professional auto-reply in preferences.
+3. ChatGPT opens in its real browser tab so you can review, edit, or continue prompting there. You can switch to another tab while it finishes.
+4. The completed result is saved in **Draft Inbox** with paragraphs, numbered/bulleted lists, emphasis, tables, and code blocks preserved. **Copy** writes both formatted HTML and plain text so Titan and Fluent Support can retain rich formatting when pasted.
 
 If the latest unreplied customer message only provides temporary access details, the extension creates or updates a local manual task and does not generate a customer reply. `ESCALATE_TO_HUMAN: ...` is reserved for unreplied messages where immediate internal/manual action is required or another genuine safety boundary applies.
 
@@ -60,6 +61,8 @@ Brief or incomplete reports are not escalated by default. The generated reply as
 ## Notifications and release checks
 
 - Fluent Support and Titan notifications are detected from unread/new row markers exposed by their open browser tabs. Toolbar actions such as "mark as unread" and title-count artifacts are ignored so opening an old mail does not create a new-mail notification. DOM changes in either service may require selector maintenance.
+- Fluent Support uses its native refresh button every 30 seconds on list and ticket-detail screens. Refresh is skipped whenever a reply editor is open so unsent work is not disturbed.
+- The dashboard badges read the latest source counts from local extension state and update immediately when a source report changes.
 - WordPress.org support and review feeds are checked every 15 minutes. The first successful check establishes a baseline so existing topics and reviews do not trigger a notification flood.
 - The three default Plugincy product records include WordPress.org review links. Custom product records can store their own review link in the Product/plugin library.
 - Release metadata is read from the official WordPress.org Plugins API every six hours and on manual refresh. Each monitored plugin is due 30 days after its reported `last_updated` value.
@@ -136,7 +139,7 @@ npm run test:unit
 npm run test:workflow
 ```
 
-Validation checks the manifest contract, side-panel configuration, required files, permissions/hosts, New Tab override, service worker entry, and JavaScript syntax. Workflow tests cover the supplied Fluent Support and Titan exports, pending-message signatures, credential/manual-task triage, duplicate signatures, timeout recovery, auto-reply insertion, notification false-positive guards, and the ChatGPT fresh-conversation guard.
+Validation checks the manifest contract, side-panel configuration, required files, permissions/hosts, New Tab override, service worker entry, and JavaScript syntax. Workflow tests cover the supplied Fluent Support and Titan exports, current Titan reply/editor selectors, Fluent native refresh safety, formatted Draft Inbox rendering, pending-message signatures, credential/manual-task triage, duplicate signatures, timeout recovery, auto-reply insertion, notification false-positive guards, ChatGPT structured-response capture, partial-stream rejection, and the fresh-conversation guard.
 
 ## Security boundaries
 

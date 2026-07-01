@@ -11,6 +11,7 @@
   const RELEASE_CACHE_KEY = "rpa_release_cache";
   const WEATHER_CACHE_KEY = "rpa_weather_cache";
   const DIRECTORY_WATCH_KEY = "rpa_directory_watch";
+  const SOURCE_STATE_KEY = "rpa_source_state";
   const DEFAULT_WEATHER_LOCATION = "Police Line, Cumilla";
   const MAX_TASKS = 80;
   const MAX_PRODUCTS = 150;
@@ -85,6 +86,10 @@
     refreshReleases: document.getElementById("refresh-releases"),
     healthList: document.getElementById("health-list"),
     refreshHealth: document.getElementById("refresh-health"),
+    fluentSupportLink: document.getElementById("fluent-support-link"),
+    fluentSupportBadge: document.getElementById("fluent-support-badge"),
+    titanMailLink: document.getElementById("titan-mail-link"),
+    titanMailBadge: document.getElementById("titan-mail-badge"),
     toastRegion: document.getElementById("toast-region")
   };
 
@@ -104,6 +109,7 @@
       loadNews(),
       loadReleases(),
       loadSessionHealth(),
+      loadSourceBadges(),
       loadWeather()
     ]);
 
@@ -241,11 +247,59 @@
         renderWeather(changes[WEATHER_CACHE_KEY].newValue);
       }
 
+      if (areaName === "local" && changes[SOURCE_STATE_KEY]) {
+        renderSourceBadges(changes[SOURCE_STATE_KEY].newValue);
+      }
+
       if (areaName === "local" && changes[DIRECTORY_WATCH_KEY]) {
         state.directoryWatch = changes[DIRECTORY_WATCH_KEY].newValue || {};
         renderReleaseCache(state.releaseCache);
       }
     });
+  }
+
+  async function loadSourceBadges() {
+    const result = await chrome.storage.local.get(SOURCE_STATE_KEY);
+    renderSourceBadges(result[SOURCE_STATE_KEY]);
+  }
+
+  function renderSourceBadges(value) {
+    const sourceState = value && typeof value === "object" ? value : {};
+    renderSourceBadge({
+      badge: elements.fluentSupportBadge,
+      link: elements.fluentSupportLink,
+      count: sourceUnreadCount(sourceState["fluent-support"]),
+      singular: "new Fluent Support ticket",
+      plural: "new Fluent Support tickets"
+    });
+    renderSourceBadge({
+      badge: elements.titanMailBadge,
+      link: elements.titanMailLink,
+      count: sourceUnreadCount(sourceState["titan-mail"]),
+      singular: "new Titan email",
+      plural: "new Titan emails"
+    });
+  }
+
+  function sourceUnreadCount(source) {
+    if (!source || typeof source !== "object") {
+      return 0;
+    }
+    const fallback = Array.isArray(source.fingerprints) ? source.fingerprints.length : 0;
+    const count = Number(source.unreadCount ?? fallback);
+    return Number.isFinite(count) ? Math.min(999, Math.max(0, count)) : fallback;
+  }
+
+  function renderSourceBadge({ badge, link, count, singular, plural }) {
+    if (!badge || !link) {
+      return;
+    }
+    const normalized = Math.floor(Number(count || 0));
+    badge.hidden = normalized < 1;
+    badge.textContent = normalized > 99 ? "99+" : String(normalized);
+    const label = normalized === 1 ? singular : plural;
+    badge.setAttribute("aria-label", normalized ? `${normalized} ${label}` : `No ${plural}`);
+    link.title = normalized ? `${normalized} ${label}` : "";
   }
 
   function bindGoogleDefaultMenus() {

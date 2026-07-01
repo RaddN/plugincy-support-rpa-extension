@@ -89,6 +89,7 @@
 
     try {
       await safeRuntimeSendMessage({ type: "RPA_OPEN_SIDE_PANEL" });
+      await prepareConversationForCapture();
       const ticket = scrapeCurrentTicket({ requireDetail: true });
       setUiState("queued", "Queued");
       const response = await safeRuntimeSendMessage({
@@ -140,6 +141,7 @@
 
     try {
       await safeRuntimeSendMessage({ type: "RPA_OPEN_SIDE_PANEL" });
+      await prepareConversationForCapture();
       const ticket = scrapeCurrentTicket({ requireDetail: true });
       const response = await safeRuntimeSendMessage({
         type: "RPA_CREATE_FIXED_REPLY",
@@ -184,6 +186,7 @@
 
     try {
       await safeRuntimeSendMessage({ type: "RPA_OPEN_SIDE_PANEL" });
+      await prepareConversationForCapture();
       const ticket = scrapeCurrentTicket({ requireDetail: true });
       const response = await safeRuntimeSendMessage({
         type: "RPA_CREATE_REVIEW_REQUEST",
@@ -236,6 +239,7 @@
 
     try {
       await safeRuntimeSendMessage({ type: "RPA_OPEN_SIDE_PANEL" });
+      await prepareConversationForCapture();
       const ticket = scrapeCurrentTicket({ requireDetail: true });
       setUiState("queued", "Queued");
       const response = await safeRuntimeSendMessage({
@@ -384,44 +388,51 @@
 
   function extractTitanMessages(subject = "") {
     const bodies = [];
-    const selectors = [
-      "[data-testid='message-item-area']",
-      ".message-item-area",
-      ".message-item-wrap",
-      "[data-testid='message-body']",
-      "[data-testid*='message-content']"
-    ];
-    const seenNodes = new Set();
+    const wraps = [
+      ...document.querySelectorAll(
+        "[data-testid='message-item-wrap'], .message-item-wrap"
+      )
+    ].filter((node, index, nodes) => nodes.indexOf(node) === index);
 
-    for (const selector of selectors) {
-      for (const node of document.querySelectorAll(selector)) {
-        if (seenNodes.has(node) || !isMeaningfullyVisible(node)) {
-          continue;
-        }
-        seenNodes.add(node);
-        const clone = cloneTitanBody(node);
-        const cleaned = core?.cleanTitanText(
-          clone.innerText || clone.textContent || ""
-        );
-        if (cleaned?.length >= 3) {
-          bodies.push({
-            role: "customer",
-            author: extractTitanMessageSender(node) || extractCustomer(),
-            sentAt: extractMessageTime(node),
-            text: cleaned
-          });
-        }
+    for (const wrap of wraps) {
+      if (!isMeaningfullyVisible(wrap)) {
+        continue;
       }
+      const author = extractTitanMessageSender(wrap) || extractCustomer();
+      const iframeText = collectReadableIframeText(wrap);
+      const area =
+        wrap.querySelector("[data-testid='message-item-area'], .message-item-area") ||
+        wrap;
+      const fallbackBody = area.querySelector(
+        "[data-testid='message-body'], [data-testid*='message-content'], .message-body, .mail-message-body"
+      );
+      const clone = fallbackBody ? cloneTitanBody(fallbackBody) : null;
+      const fallbackText = clone
+        ? core?.cleanTitanText(clone.innerText || clone.textContent || "")
+        : "";
+      const text = iframeText || fallbackText;
+      if (text?.length < 3) {
+        continue;
+      }
+      bodies.push({
+        role: normalizeTitanMessageRole(author, wrap),
+        author,
+        sentAt: extractMessageTime(wrap),
+        text
+      });
     }
 
-    const iframeText = collectReadableIframeText();
-    if (iframeText) {
-      bodies.push({
-        role: "customer",
-        author: extractCustomer(),
-        sentAt: "",
-        text: iframeText
-      });
+    if (!wraps.length) {
+      const iframeText = collectReadableIframeText();
+      if (iframeText) {
+        const author = extractCustomer();
+        bodies.push({
+          role: normalizeTitanMessageRole(author, document.body),
+          author,
+          sentAt: "",
+          text: iframeText
+        });
+      }
     }
 
     if (!bodies.length && subject) {
@@ -446,6 +457,14 @@
         "[class*='signature']",
         "[class*='quoted']",
         "[class*='task']",
+        "[data-testid='message-header-right']",
+        "[data-testid='message-actions-wrap']",
+        "[data-testid='reply-with-ai-container']",
+        "[data-testid='message-add-to-task-button']",
+        "[data-testid='footer-container']",
+        "[data-testid='header-container']",
+        "[data-testid='iframe-container']",
+        "iframe",
         "[aria-label*='tracking' i]",
         "img[width='1']",
         "img[height='1']"
@@ -456,9 +475,17 @@
     return clone;
   }
 
-  function collectReadableIframeText() {
+  function collectReadableIframeText(root = document) {
     const parts = [];
-    for (const frame of document.querySelectorAll("iframe")) {
+    const frames =
+      root === document
+        ? document.querySelectorAll(
+            "[data-testid='message-item-wrap'] [data-testid='iframe-container'] iframe, .message-item-wrap .iframe-container iframe"
+          )
+        : root.querySelectorAll(
+            "[data-testid='iframe-container'] iframe, .iframe-container iframe"
+          );
+    for (const frame of frames) {
       try {
         const body = frame.contentDocument?.body;
         if (!body) {
@@ -474,6 +501,32 @@
       }
     }
     return dedupeTextBlocks(parts).join("\n\n");
+  }
+
+  async function prepareConversationForCapture() {
+    if (PLATFORM !== "titan-mail") {
+      return;
+    }
+
+    const collapsed = [
+      ...document.querySelectorAll(
+        "[data-testid='message-item-wrap'].collapsed, .message-item-wrap.collapsed"
+      )
+    ].filter(isMeaningfullyVisible);
+    for (const wrap of collapsed) {
+      const opener =
+        wrap.querySelector("[data-testid='message-item-area'], .message-item-area") ||
+        wrap;
+      opener.click();
+      await waitFor(
+        () =>
+          !wrap.isConnected ||
+          !wrap.classList.contains("collapsed") ||
+          wrap.querySelector("[data-testid='iframe-container'] iframe"),
+        2500
+      );
+      await delay(150);
+    }
   }
 
   function extractCustomer() {
@@ -514,6 +567,25 @@
       return "customer";
     }
     return "unknown";
+  }
+
+  function normalizeTitanMessageRole(author, node) {
+    const context = normalizeText(
+      [
+        author,
+        node?.getAttribute?.("class"),
+        node?.getAttribute?.("data-direction"),
+        node?.getAttribute?.("aria-label")
+      ].join(" ")
+    );
+    if (
+      /(?:@plugincy\.com\b|\bplugincy support\b|\boutgoing\b|\bsent by me\b|\bfrom me\b)/i.test(
+        context
+      )
+    ) {
+      return "support";
+    }
+    return "customer";
   }
 
   function extractMessageTime(node) {
@@ -715,6 +787,9 @@
       PLATFORM === "fluent-support"
         ? [".fs_ticket_header button", ".fs_header_left_group button"]
         : [
+            "[data-testid='reply-tooltip']",
+            "[data-testid='reply-all-tooltip']",
+            "[data-testid='reply-icon']",
             "[data-testid='footer-reply-area']",
             ".footer-reply-area",
             "[data-testid*='reply-button']"
@@ -723,7 +798,10 @@
       const button = [...document.querySelectorAll(selector)].find(
         (node) =>
           isMeaningfullyVisible(node) &&
-          /^(?:reply|reply all)$/i.test(normalizeText(node.textContent))
+          (["reply-tooltip", "reply-all-tooltip", "reply-icon"].includes(
+            node.getAttribute("data-testid")
+          ) ||
+            /^(?:reply|reply all)$/i.test(normalizeText(node.textContent)))
       );
       if (button) {
         return button;
@@ -753,6 +831,21 @@
   }
 
   function findReplySubmitButton(editor) {
+    if (PLATFORM === "titan-mail") {
+      const titanSend = firstVisibleElement([
+        "[data-testid='send-action-btn']",
+        "button.btn-send",
+        "[data-testid*='composer'] button[type='submit']"
+      ]);
+      if (
+        titanSend &&
+        !titanSend.disabled &&
+        titanSend.getAttribute("aria-disabled") !== "true"
+      ) {
+        return titanSend;
+      }
+    }
+
     let container = editor;
     for (let depth = 0; depth < 6 && container?.parentElement; depth += 1) {
       container = container.parentElement;
@@ -1031,12 +1124,15 @@
   }
 
   globalThis.PlugincyScraperTest = {
+    collectReadableIframeText,
     extractFluentConversation,
     extractTitanConversation,
     findReplyEditor,
+    findReplyOpener,
     findReplySubmitButton,
     insertAndSendReply,
     isLikelyTicketDetailOpen,
+    prepareConversationForCapture,
     scrapeCurrentTicket,
     setEditorValue
   };

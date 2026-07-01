@@ -7,6 +7,38 @@
   const DRAFT_INDEX_KEY = "rpa_draft_index";
   const DRAFT_KEY_PREFIX = "rpa_draft_";
   const MAX_TASKS = 80;
+  const DROP_DRAFT_TAGS = new Set(["IFRAME", "OBJECT", "SCRIPT", "STYLE"]);
+  const SAFE_DRAFT_TAGS = new Set([
+    "A",
+    "B",
+    "BLOCKQUOTE",
+    "BR",
+    "CODE",
+    "DEL",
+    "EM",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "HR",
+    "I",
+    "LI",
+    "OL",
+    "P",
+    "PRE",
+    "S",
+    "STRONG",
+    "TABLE",
+    "TBODY",
+    "TD",
+    "TH",
+    "THEAD",
+    "TR",
+    "U",
+    "UL"
+  ]);
 
   const state = {
     drafts: [],
@@ -237,13 +269,21 @@
     head.append(copy, status);
     card.append(head);
 
+    let editor = null;
+    let preview = null;
+    let editAction = null;
     if (draft.draftText) {
-      const editor = document.createElement("textarea");
+      preview = document.createElement("div");
+      preview.className = "draft-preview";
+      preview.setAttribute("aria-label", `Draft preview for ${draft.subject}`);
+      renderDraftPreview(preview, draft.draftHtml, draft.draftText);
+
+      editor = document.createElement("textarea");
       editor.className = "draft-editor";
       editor.value = draft.draftText;
       editor.setAttribute("aria-label", `Edit draft for ${draft.subject}`);
-      editor.addEventListener("change", () => void saveEditedDraft(draft, editor.value));
-      card.append(editor);
+      editor.hidden = true;
+      card.append(preview, editor);
     }
     if (draft.error) {
       const error = document.createElement("p");
@@ -255,8 +295,24 @@
     const actions = document.createElement("div");
     actions.className = "record-actions";
     if (draft.draftText) {
+      editAction = createAction("Edit", () => {
+        if (editor.hidden) {
+          preview.hidden = true;
+          editor.hidden = false;
+          editAction.textContent = "Save";
+          editor.focus();
+          return;
+        }
+        void saveEditedDraft(draft, editor.value);
+      });
       actions.append(
-        createAction("Copy", () => void copyText(draft.draftText)),
+        createAction("Copy", () =>
+          void copyDraft({
+            text: editor.hidden ? draft.draftText : editor.value,
+            html: editor.hidden ? draft.draftHtml : ""
+          })
+        ),
+        editAction,
         createAction("Create task", () => void createTaskFromDraft(draft))
       );
     }
@@ -282,6 +338,7 @@
     const updated = {
       ...draft,
       draftText: String(value || "").trim().slice(0, 30000),
+      draftHtml: "",
       updatedAt: Date.now()
     };
     await chrome.storage.local.set({
@@ -482,6 +539,115 @@
     showToast("Draft copied.");
   }
 
+  async function copyDraft({ text, html }) {
+    const plainText = String(text || "").trim();
+    const safeHtml = buildSafeDraftHtml(html, plainText);
+    if (
+      safeHtml &&
+      typeof ClipboardItem === "function" &&
+      typeof navigator.clipboard.write === "function"
+    ) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([plainText], { type: "text/plain" }),
+            "text/html": new Blob([safeHtml], { type: "text/html" })
+          })
+        ]);
+        showToast("Formatted draft copied.");
+        return;
+      } catch {
+        // Some browsers only allow plain-text clipboard writes from extension pages.
+      }
+    }
+    await copyText(plainText);
+  }
+
+  function renderDraftPreview(target, html, text) {
+    target.replaceChildren();
+    const fragment = sanitizeDraftHtml(html);
+    if (fragment.childNodes.length) {
+      target.classList.remove("is-plain");
+      target.append(fragment);
+      return;
+    }
+    target.classList.add("is-plain");
+    target.textContent = String(text || "");
+  }
+
+  function buildSafeDraftHtml(html, text) {
+    const wrapper = document.createElement("div");
+    const fragment = sanitizeDraftHtml(html);
+    if (fragment.childNodes.length) {
+      wrapper.append(fragment);
+      return wrapper.innerHTML;
+    }
+
+    for (const block of String(text || "").split(/\n{2,}/)) {
+      const paragraph = document.createElement("p");
+      const lines = block.split("\n");
+      lines.forEach((line, index) => {
+        if (index > 0) {
+          paragraph.append(document.createElement("br"));
+        }
+        paragraph.append(document.createTextNode(line));
+      });
+      wrapper.append(paragraph);
+    }
+    return wrapper.innerHTML;
+  }
+
+  function sanitizeDraftHtml(value) {
+    const fragment = document.createDocumentFragment();
+    if (!value) {
+      return fragment;
+    }
+
+    const parsed = new DOMParser().parseFromString(String(value), "text/html");
+    appendSafeDraftChildren(parsed.body, fragment);
+    return fragment;
+  }
+
+  function appendSafeDraftChildren(source, target) {
+    for (const child of source.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        target.append(document.createTextNode(child.textContent || ""));
+        continue;
+      }
+      if (!(child instanceof HTMLElement)) {
+        continue;
+      }
+      if (DROP_DRAFT_TAGS.has(child.tagName)) {
+        continue;
+      }
+      if (!SAFE_DRAFT_TAGS.has(child.tagName)) {
+        appendSafeDraftChildren(child, target);
+        continue;
+      }
+
+      const safe = document.createElement(child.tagName.toLowerCase());
+      if (child.tagName === "A") {
+        const href = normalizeDraftLink(child.getAttribute("href"));
+        if (href) {
+          safe.href = href;
+          safe.target = "_blank";
+          safe.rel = "noreferrer";
+        }
+      }
+      appendSafeDraftChildren(child, safe);
+      target.append(safe);
+    }
+  }
+
+  function normalizeDraftLink(value) {
+    try {
+      const url = new URL(String(value || ""));
+      return ["http:", "https:"].includes(url.protocol) ? url.href.slice(0, 2000) : "";
+    } catch {
+      return "";
+    }
+  }
+
   function setWorking(button, working, label) {
     button.disabled = working;
     button.textContent = label;
@@ -548,4 +714,9 @@
       minute: "2-digit"
     }).format(Number(value));
   }
+
+  globalThis.PlugincySidepanelTest = {
+    buildSafeDraftHtml,
+    sanitizeDraftHtml
+  };
 })();

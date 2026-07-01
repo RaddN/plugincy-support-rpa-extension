@@ -350,17 +350,98 @@ main {
   color: var(--amber);
 }
 
+.draft-preview,
 .draft-editor {
   width: calc(100% - 26px);
   min-height: 126px;
   margin: 0 13px 10px;
-  resize: vertical;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px;
   background: var(--soft);
   color: var(--ink);
   line-height: 1.5;
+}
+
+.draft-preview {
+  overflow: auto;
+  max-height: 360px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.draft-preview.is-plain {
+  white-space: pre-wrap;
+}
+
+.draft-preview > :first-child {
+  margin-top: 0;
+}
+
+.draft-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.draft-preview p,
+.draft-preview blockquote,
+.draft-preview ol,
+.draft-preview ul,
+.draft-preview pre,
+.draft-preview table {
+  margin: 0 0 10px;
+}
+
+.draft-preview ol,
+.draft-preview ul {
+  padding-left: 24px;
+}
+
+.draft-preview li + li {
+  margin-top: 4px;
+}
+
+.draft-preview blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 10px;
+  color: var(--muted);
+}
+
+.draft-preview code {
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.draft-preview pre {
+  overflow-x: auto;
+  border-radius: 8px;
+  padding: 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+  white-space: pre;
+}
+
+.draft-preview pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.draft-preview table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.draft-preview th,
+.draft-preview td {
+  border: 1px solid var(--line);
+  padding: 5px;
+  text-align: left;
+}
+
+.draft-editor {
+  resize: vertical;
 }
 
 .record-error {

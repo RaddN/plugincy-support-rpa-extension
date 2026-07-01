@@ -412,6 +412,7 @@ async function saveDraftRecordUnlocked(record) {
       : "fluent-support",
     ticket: record.ticket && typeof record.ticket === "object" ? record.ticket : null,
     draftText: cleanText(record.draftText, 30000),
+    draftHtml: cleanDraftHtml(record.draftHtml, 60000),
     error: cleanText(record.error, 800),
     attempts: Math.max(1, Number(record.attempts || 1)),
     createdAt: Number(record.createdAt || Date.now()),
@@ -1498,6 +1499,13 @@ function cleanText(value, maxLength) {
     .slice(0, maxLength);
 }
 
+function cleanDraftHtml(value, maxLength) {
+  const html = String(value || "")
+    .replace(/\u0000/g, "")
+    .trim();
+  return html.length <= maxLength ? html : "";
+}
+
 function normalizeGithubUrl(value) {
   const candidate = String(value || "").trim();
   if (!candidate) {
@@ -1629,11 +1637,17 @@ async function findOrCreateChatGptTab({ active = false } = {}) {
       active,
       pinned: true
     });
+    tab = await chrome.tabs.update(tab.id, {
+      pinned: true,
+      active,
+      autoDiscardable: false
+    });
     await chrome.storage.session.set({ [GPT_TAB_ID_KEY]: tab.id });
   } else {
     tab = await chrome.tabs.update(tab.id, {
       pinned: true,
-      active
+      active,
+      autoDiscardable: false
     });
     if (active && Number.isInteger(tab.windowId)) {
       await chrome.windows.update(tab.windowId, { focused: true });
@@ -1692,6 +1706,7 @@ async function ensureContentScript(tabId, file, pingType) {
 
 async function handleGptResult(message) {
   const responseText = cleanText(message.response, 30000);
+  const responseHtml = cleanDraftHtml(message.responseHtml, 60000);
   if (!responseText) {
     throw new Error("ChatGPT returned an empty response.");
   }
@@ -1732,6 +1747,7 @@ async function handleGptResult(message) {
     await updateDraftRecord(job.id, {
       status: "draft_ready",
       draftText: responseText,
+      draftHtml: responseHtml,
       error: ""
     });
 
@@ -2662,10 +2678,23 @@ async function handleSourceStateReport(message, tab) {
   const previousFingerprints = Array.isArray(previous?.fingerprints)
     ? previous.fingerprints
     : [];
+  const rawReportedUnreadCount = Number(message.unreadCount ?? fingerprints.length);
+  const rawPreviousUnreadCount = Number(
+    previous?.unreadCount ?? previousFingerprints.length
+  );
+  const reportedUnreadCount = Number.isFinite(rawReportedUnreadCount)
+    ? Math.min(50, Math.max(0, rawReportedUnreadCount))
+    : fingerprints.length;
+  const previousUnreadCount = Number.isFinite(rawPreviousUnreadCount)
+    ? Math.min(50, Math.max(0, rawPreviousUnreadCount))
+    : previousFingerprints.length;
   const baselineOnly = message.baselineOnly === true || message.listView === false;
   const newFingerprints = previous && !baselineOnly
     ? fingerprints.filter((fingerprint) => !previousFingerprints.includes(fingerprint))
     : [];
+  const newItemCount = baselineOnly
+    ? 0
+    : Math.max(newFingerprints.length, reportedUnreadCount - previousUnreadCount);
 
   state[source] = {
     fingerprints:
@@ -2674,22 +2703,26 @@ async function handleSourceStateReport(message, tab) {
         : fingerprints.length || !previous
           ? fingerprints
           : previousFingerprints,
+    unreadCount:
+      message.listView === false && previous
+        ? previousUnreadCount
+        : reportedUnreadCount,
     listView: message.listView !== false,
     observedAt: Date.now()
   };
   await chrome.storage.local.set({ [SOURCE_STATE_KEY]: state });
 
-  if (newFingerprints.length) {
+  if (newItemCount > 0) {
     const isMail = source === "titan-mail";
     await createWorkbenchNotification({
       category: source,
       title: isMail ? "New Titan mail" : "New Fluent Support ticket",
       message:
-        newFingerprints.length === 1
+        newItemCount === 1
           ? isMail
             ? "A new unread email was detected."
             : "A new unread support ticket was detected."
-          : `${newFingerprints.length} new unread ${
+          : `${newItemCount} new unread ${
               isMail ? "emails were" : "support tickets were"
             } detected.`,
       targetUrl:
@@ -2702,7 +2735,7 @@ async function handleSourceStateReport(message, tab) {
 
   return {
     baseline: !previous || baselineOnly,
-    newItems: newFingerprints.length
+    newItems: newItemCount
   };
 }
 
